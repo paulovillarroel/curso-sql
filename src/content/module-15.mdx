@@ -1,0 +1,641 @@
+import Callout from "../components/Callout.astro"
+import CommandTable from "../components/CommandTable.astro"
+
+En el modulo anterior aprendiste a normalizar una base de datos para evitar redundancia. Pero las bases de datos normalizadas estan optimizadas para **escribir** datos (insertar, actualizar), no para **analizarlos**. Cuando necesitas hacer analisis sobre grandes volumenes de datos, necesitas una estructura diferente: el **modelo dimensional**.
+
+<Callout type="info" title="¿Donde se usa esto?">
+  El modelo dimensional es la base de los **data warehouses** (almacenes de datos) y herramientas de Business Intelligence como Tableau, Power BI y Looker. Si trabajas en ciencia de datos o analitica, vas a encontrarte con este modelo constantemente.
+</Callout>
+
+---
+
+## OLTP vs OLAP: dos mundos diferentes
+
+Las bases de datos se usan para dos propositos muy distintos:
+
+<CommandTable commands={[
+  { command: "OLTP (Online Transaction Processing)", description: "Operaciones del dia a dia: insertar pedidos, actualizar stock, registrar clientes. Muchas escrituras pequenas y rapidas. Estructura normalizada (3FN)." },
+  { command: "OLAP (Online Analytical Processing)", description: "Analisis y reportes: ventas por mes, tendencias, comparaciones. Lecturas masivas sobre grandes volumenes. Estructura desnormalizada (modelo dimensional)." },
+]} />
+
+Nuestra BD `tienda` es OLTP: esta normalizada para registrar transacciones. Pero si quisieras analizar las ventas de los ultimos 3 anos cruzando datos de productos, clientes, tiempo y vendedores, la estructura normalizada requiere muchos JOINs y es lenta para volumen.
+
+El modelo dimensional reorganiza esos mismos datos para hacer el analisis rapido y natural.
+
+---
+
+## Tablas de hechos y dimensiones
+
+El modelo dimensional se basa en dos tipos de tablas:
+
+### Tabla de hechos (Fact table)
+
+Contiene los **eventos medibles** del negocio: ventas, pedidos, transacciones, clics. Cada fila es un evento y tiene:
+
+- **Claves foraneas** que apuntan a las tablas de dimensiones
+- **Medidas** (metricas numericas): cantidad vendida, monto, duracion, etc.
+
+```sql
+-- Tabla de hechos: cada fila es una linea de venta
+CREATE TABLE fact_ventas (
+    venta_id INTEGER,
+    fecha_id INTEGER,        -- FK a dim_fecha
+    producto_id INTEGER,     -- FK a dim_producto
+    cliente_id INTEGER,      -- FK a dim_cliente
+    -- Medidas (lo que quieres analizar)
+    cantidad INTEGER,
+    monto DECIMAL(10,2),
+    descuento DECIMAL(10,2),
+    costo DECIMAL(10,2)
+);
+```
+
+### Tabla de dimensiones (Dimension table)
+
+Contiene las **descripciones** y **contexto** de los hechos: quien compro, que producto, cuando, donde. Son tablas anchas con muchos atributos descriptivos:
+
+```sql
+-- Dimension de producto: describe cada producto
+CREATE TABLE dim_producto (
+    producto_id INTEGER PRIMARY KEY,
+    nombre VARCHAR(100),
+    categoria VARCHAR(50),
+    subcategoria VARCHAR(50),
+    marca VARCHAR(50),
+    precio_lista DECIMAL(10,2)
+);
+
+-- Dimension de cliente: describe cada cliente
+CREATE TABLE dim_cliente (
+    cliente_id INTEGER PRIMARY KEY,
+    nombre VARCHAR(100),
+    email VARCHAR(100),
+    ciudad VARCHAR(50),
+    region VARCHAR(50),
+    segmento VARCHAR(50)  -- 'Premium', 'Regular', 'Nuevo'
+);
+
+-- Dimension de fecha: describe cada dia
+CREATE TABLE dim_fecha (
+    fecha_id INTEGER PRIMARY KEY,
+    fecha DATE,
+    dia INTEGER,
+    mes INTEGER,
+    trimestre INTEGER,
+    anio INTEGER,
+    nombre_mes VARCHAR(20),
+    nombre_dia VARCHAR(20),
+    es_fin_de_semana BOOLEAN
+);
+```
+
+<Callout type="tip" title="La dimension de fecha es especial">
+  La tabla `dim_fecha` siempre existe en un modelo dimensional. Se pre-carga con todos los dias de un rango (ej: 2020-2030) y tiene columnas calculadas como el nombre del mes, trimestre, si es feriado, etc. Esto permite agrupar facilmente por cualquier periodo sin funciones como EXTRACT.
+</Callout>
+
+---
+
+## Esquema estrella (Star Schema)
+
+El **esquema estrella** es la forma mas comun de organizar un modelo dimensional. La tabla de hechos esta en el centro, rodeada por las dimensiones:
+
+```
+                    dim_fecha
+                       │
+                       │ fecha_id
+                       │
+    dim_cliente ──── fact_ventas ──── dim_producto
+                  cliente_id │ producto_id
+                       │
+                       │ vendedor_id
+                       │
+                   dim_vendedor
+```
+
+Se llama "estrella" porque visualmente la tabla de hechos es el centro y las dimensiones son las puntas.
+
+### Ventajas del esquema estrella
+
+- **Consultas simples**: maximo 1 JOIN por dimension
+- **Rendimiento**: pocas tablas, JOINs directos, facil de optimizar
+- **Intuitivo**: los usuarios de negocio entienden la estructura facilmente
+
+---
+
+## Esquema copo de nieve (Snowflake Schema)
+
+Es una variacion donde las dimensiones estan **normalizadas**: en lugar de una tabla `dim_producto` con todos los atributos, tienes `dim_producto → dim_categoria → dim_subcategoria`.
+
+```
+                    dim_fecha
+                       │
+    dim_cliente ──── fact_ventas ──── dim_producto ──── dim_categoria
+                       │
+                   dim_vendedor ──── dim_region
+```
+
+<CommandTable commands={[
+  { command: "Esquema estrella", description: "Dimensiones desnormalizadas (anchas). Menos JOINs, mas rapido para consultas. Es el mas usado." },
+  { command: "Esquema copo de nieve", description: "Dimensiones normalizadas. Ahorra espacio pero requiere mas JOINs. Menos comun en la practica." },
+]} />
+
+<Callout type="tip" title="En la practica, usa estrella">
+  El esquema estrella es el estandar de la industria. El ahorro de espacio del copo de nieve rara vez justifica la complejidad adicional de los JOINs. Las herramientas de BI estan optimizadas para trabajar con esquemas estrella.
+</Callout>
+
+---
+
+## Transformando tienda a modelo dimensional
+
+Veamos como convertiria nuestra BD `tienda` (OLTP) a un modelo dimensional (OLAP):
+
+### Paso 1: Identificar los hechos
+
+El evento medible principal es la **venta de productos**. Cada linea de `detalle_pedidos` es un hecho.
+
+### Paso 2: Identificar las dimensiones
+
+- **Producto**: nombre, categoria, precio
+- **Cliente**: nombre, ciudad
+- **Fecha**: datos temporales del pedido
+- **Estado del pedido**: completado, enviado, pendiente
+
+### Paso 3: Crear las tablas dimensionales
+
+```sql
+-- Dimension fecha (pre-cargada)
+CREATE TABLE dim_fecha (
+    fecha_id INTEGER PRIMARY KEY,
+    fecha DATE NOT NULL,
+    dia INTEGER,
+    mes INTEGER,
+    trimestre INTEGER,
+    anio INTEGER,
+    nombre_mes VARCHAR(20),
+    dia_semana VARCHAR(20),
+    es_fin_de_semana BOOLEAN
+);
+
+-- Cargar fechas para 2024
+INSERT INTO dim_fecha
+SELECT
+    (EXTRACT(YEAR FROM d) * 10000 + EXTRACT(MONTH FROM d) * 100 + EXTRACT(DAY FROM d))::INTEGER AS fecha_id,
+    d AS fecha,
+    EXTRACT(DAY FROM d)::INTEGER AS dia,
+    EXTRACT(MONTH FROM d)::INTEGER AS mes,
+    EXTRACT(QUARTER FROM d)::INTEGER AS trimestre,
+    EXTRACT(YEAR FROM d)::INTEGER AS anio,
+    TO_CHAR(d, 'Month') AS nombre_mes,
+    TO_CHAR(d, 'Day') AS dia_semana,
+    EXTRACT(DOW FROM d) IN (0, 6) AS es_fin_de_semana
+FROM generate_series('2024-01-01'::DATE, '2024-12-31'::DATE, '1 day') AS d;
+
+-- Dimension producto
+CREATE TABLE dim_producto AS
+SELECT
+    id AS producto_id,
+    nombre,
+    categoria,
+    precio AS precio_lista
+FROM productos;
+
+-- Dimension cliente
+CREATE TABLE dim_cliente AS
+SELECT
+    id AS cliente_id,
+    nombre,
+    email,
+    ciudad
+FROM clientes;
+```
+
+### Paso 4: Crear la tabla de hechos
+
+```sql
+CREATE TABLE fact_ventas AS
+SELECT
+    dp.id AS venta_id,
+    (EXTRACT(YEAR FROM pe.fecha) * 10000
+     + EXTRACT(MONTH FROM pe.fecha) * 100
+     + EXTRACT(DAY FROM pe.fecha))::INTEGER AS fecha_id,
+    dp.producto_id,
+    pe.cliente_id,
+    pe.estado,
+    dp.cantidad,
+    dp.precio_unitario,
+    dp.cantidad * dp.precio_unitario AS monto_total
+FROM detalle_pedidos dp
+JOIN pedidos pe ON dp.pedido_id = pe.id;
+```
+
+### Paso 5: Consultar el modelo dimensional
+
+Ahora las consultas analiticas son simples y directas:
+
+```sql
+-- Ventas por categoria y mes
+SELECT
+    dp.categoria,
+    df.nombre_mes,
+    df.anio,
+    SUM(fv.monto_total) AS total_ventas,
+    SUM(fv.cantidad) AS unidades
+FROM fact_ventas fv
+JOIN dim_producto dp ON fv.producto_id = dp.producto_id
+JOIN dim_fecha df ON fv.fecha_id = df.fecha_id
+GROUP BY dp.categoria, df.nombre_mes, df.anio, df.mes
+ORDER BY df.anio, df.mes;
+
+-- Top clientes por ciudad y trimestre
+SELECT
+    dc.ciudad,
+    df.trimestre,
+    dc.nombre,
+    SUM(fv.monto_total) AS gasto_total
+FROM fact_ventas fv
+JOIN dim_cliente dc ON fv.cliente_id = dc.cliente_id
+JOIN dim_fecha df ON fv.fecha_id = df.fecha_id
+GROUP BY dc.ciudad, df.trimestre, dc.nombre
+ORDER BY dc.ciudad, df.trimestre, gasto_total DESC;
+```
+
+<Callout type="info" title="Nota sobre el rendimiento">
+  Con 15 productos y 15 pedidos, no vas a notar diferencia de rendimiento. La ventaja del modelo dimensional se manifiesta con millones de filas, donde la estructura desnormalizada y los JOINs simples marcan una diferencia enorme.
+</Callout>
+
+---
+
+## Tipos de tablas de hechos
+
+No todas las tablas de hechos son iguales. Existen tres tipos principales:
+
+<CommandTable commands={[
+  { command: "Hechos transaccionales", description: "Un registro por evento/transaccion. Es el mas comun. Ejemplo: cada linea de venta." },
+  { command: "Hechos periodicos (snapshot)", description: "Un registro por periodo fijo. Ejemplo: stock al final de cada dia, saldo al cierre de mes." },
+  { command: "Hechos acumulativos", description: "Registro que se actualiza en el tiempo. Ejemplo: un pedido que pasa por estados (creado → enviado → entregado) con fechas." },
+]} />
+
+Nuestra `fact_ventas` es **transaccional**: cada fila es una linea de venta individual.
+
+Un ejemplo de hechos periodicos seria:
+
+```sql
+-- Snapshot diario de stock
+CREATE TABLE fact_stock_diario (
+    fecha_id INTEGER,
+    producto_id INTEGER,
+    stock_al_cierre INTEGER,
+    unidades_vendidas_dia INTEGER,
+    unidades_recibidas_dia INTEGER
+);
+```
+
+---
+
+## Slowly Changing Dimensions (SCD)
+
+Un problema comun: ¿que pasa cuando los datos de una dimension **cambian**? Si un cliente se muda de Santiago a Valparaiso, ¿actualizas la dimension y pierdes el historial?
+
+<CommandTable commands={[
+  { command: "SCD Tipo 1: Sobreescribir", description: "Simplemente actualizas el valor. Se pierde el historial. Util cuando no importa la historia (ej: corregir un error)." },
+  { command: "SCD Tipo 2: Nueva fila", description: "Creas una nueva fila con los datos nuevos y marcas la anterior como inactiva. Preserva el historial completo." },
+  { command: "SCD Tipo 3: Nueva columna", description: "Agregas una columna 'valor_anterior'. Solo guarda el cambio mas reciente, no el historial completo." },
+]} />
+
+### SCD Tipo 2: el mas usado
+
+```sql
+-- Dimension cliente con historial (SCD Tipo 2)
+CREATE TABLE dim_cliente_scd2 (
+    cliente_sk SERIAL PRIMARY KEY,     -- surrogate key (clave sintetica)
+    cliente_id INTEGER,                -- clave natural (id original)
+    nombre VARCHAR(100),
+    ciudad VARCHAR(50),
+    fecha_inicio DATE,                 -- desde cuando es valido
+    fecha_fin DATE,                    -- hasta cuando (NULL = activo)
+    es_actual BOOLEAN DEFAULT TRUE
+);
+```
+
+```
+ cliente_sk │ cliente_id │ nombre       │ ciudad      │ fecha_inicio │ fecha_fin  │ es_actual
+────────────┼────────────┼──────────────┼─────────────┼──────────────┼────────────┼──────────
+      1     │     1      │ Maria Garcia │ Santiago    │ 2024-01-01   │ 2024-06-30 │ FALSE
+      2     │     1      │ Maria Garcia │ Valparaiso │ 2024-07-01   │    NULL    │ TRUE
+```
+
+- Para analisis **actual**: filtrar con `WHERE es_actual = TRUE`
+- Para analisis **historico**: hacer JOIN por rango de fechas
+
+<Callout type="tip" title="Surrogate keys">
+  En el modelo dimensional, las dimensiones SCD Tipo 2 usan una **surrogate key** (clave sintetica auto-incremental) como PK en lugar de la clave natural. Esto permite tener multiples filas para el mismo cliente (una por cada version historica).
+</Callout>
+
+---
+
+## Medidas: aditivas, semi-aditivas y no aditivas
+
+Las medidas (metricas) en la tabla de hechos se clasifican segun como se pueden agregar:
+
+<CommandTable commands={[
+  { command: "Aditivas", description: "Se pueden sumar en todas las dimensiones. Ejemplo: monto de venta, cantidad. SUM siempre tiene sentido." },
+  { command: "Semi-aditivas", description: "Se pueden sumar en algunas dimensiones pero no en otras. Ejemplo: saldo de cuenta (puedes sumar por cliente, pero no por tiempo)." },
+  { command: "No aditivas", description: "No se pueden sumar. Ejemplo: porcentaje de descuento, precio unitario. Requieren AVG, MAX o calculo especial." },
+]} />
+
+```sql
+-- Ejemplo: medidas aditivas (se pueden sumar libremente)
+SELECT
+    dp.categoria,
+    SUM(fv.monto_total) AS ventas_totales,     -- aditiva: OK sumar
+    SUM(fv.cantidad) AS unidades_totales        -- aditiva: OK sumar
+FROM fact_ventas fv
+JOIN dim_producto dp ON fv.producto_id = dp.producto_id
+GROUP BY dp.categoria;
+
+-- Ejemplo: medida no aditiva (NO sumar, usar AVG)
+SELECT
+    dp.categoria,
+    ROUND(AVG(fv.precio_unitario), 2) AS precio_promedio  -- no aditiva
+FROM fact_ventas fv
+JOIN dim_producto dp ON fv.producto_id = dp.producto_id
+GROUP BY dp.categoria;
+```
+
+---
+
+## Modelo dimensional vs normalizado: resumen
+
+<CommandTable commands={[
+  { command: "Proposito", description: "Normalizado: transacciones (OLTP). Dimensional: analisis (OLAP)." },
+  { command: "Estructura", description: "Normalizado: muchas tablas, sin redundancia. Dimensional: pocas tablas, redundancia controlada." },
+  { command: "JOINs", description: "Normalizado: muchos, complejos. Dimensional: pocos, simples (estrella)." },
+  { command: "Escritura", description: "Normalizado: rapido y seguro. Dimensional: mas lento (transformaciones ETL)." },
+  { command: "Lectura/analisis", description: "Normalizado: puede ser lento. Dimensional: optimizado para grandes volumenes." },
+  { command: "Usuarios", description: "Normalizado: desarrolladores. Dimensional: analistas, herramientas BI." },
+]} />
+
+<Callout type="info" title="No es uno u otro">
+  En la practica, las empresas tienen **ambos**: una base OLTP normalizada para las operaciones diarias, y un data warehouse dimensional para analitica. Un proceso llamado **ETL** (Extract, Transform, Load) copia y transforma los datos del OLTP al warehouse periodicamente.
+</Callout>
+
+---
+
+### Ejercicios
+
+**Ejercicio 1:** Usando la BD `tienda`, crea una dimension de fecha (`dim_fecha`) con los campos: fecha_id, fecha, dia, mes, trimestre, anio, nombre_mes. Cargala con todas las fechas de 2024.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+CREATE TABLE dim_fecha (
+    fecha_id INTEGER PRIMARY KEY,
+    fecha DATE NOT NULL,
+    dia INTEGER,
+    mes INTEGER,
+    trimestre INTEGER,
+    anio INTEGER,
+    nombre_mes VARCHAR(20)
+);
+
+INSERT INTO dim_fecha
+SELECT
+    (EXTRACT(YEAR FROM d) * 10000 + EXTRACT(MONTH FROM d) * 100 + EXTRACT(DAY FROM d))::INTEGER,
+    d,
+    EXTRACT(DAY FROM d)::INTEGER,
+    EXTRACT(MONTH FROM d)::INTEGER,
+    EXTRACT(QUARTER FROM d)::INTEGER,
+    EXTRACT(YEAR FROM d)::INTEGER,
+    TO_CHAR(d, 'Month')
+FROM generate_series('2024-01-01'::DATE, '2024-12-31'::DATE, '1 day') AS d;
+
+-- Verificar
+SELECT * FROM dim_fecha LIMIT 10;
+SELECT COUNT(*) FROM dim_fecha;  -- deberia dar 366 (2024 es bisiesto)
+```
+</details>
+
+**Ejercicio 2:** Crea una tabla de hechos `fact_ventas` a partir de `detalle_pedidos` y `pedidos`. Debe incluir: venta_id, fecha_id (formato YYYYMMDD), producto_id, cliente_id, cantidad, precio_unitario y monto_total.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+CREATE TABLE fact_ventas AS
+SELECT
+    dp.id AS venta_id,
+    (EXTRACT(YEAR FROM pe.fecha) * 10000
+     + EXTRACT(MONTH FROM pe.fecha) * 100
+     + EXTRACT(DAY FROM pe.fecha))::INTEGER AS fecha_id,
+    dp.producto_id,
+    pe.cliente_id,
+    dp.cantidad,
+    dp.precio_unitario,
+    dp.cantidad * dp.precio_unitario AS monto_total
+FROM detalle_pedidos dp
+JOIN pedidos pe ON dp.pedido_id = pe.id;
+
+-- Verificar
+SELECT COUNT(*) FROM fact_ventas;
+SELECT * FROM fact_ventas LIMIT 5;
+```
+</details>
+
+**Ejercicio 3:** Usando el modelo dimensional creado en los ejercicios anteriores, escribe una consulta que muestre las ventas totales por categoria y por trimestre. Compara la complejidad con la misma consulta usando el modelo OLTP original.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+-- Con modelo dimensional (simple y directo)
+SELECT
+    dp.categoria,
+    df.trimestre,
+    SUM(fv.monto_total) AS total_ventas,
+    SUM(fv.cantidad) AS unidades
+FROM fact_ventas fv
+JOIN dim_producto dp ON fv.producto_id = dp.producto_id
+JOIN dim_fecha df ON fv.fecha_id = df.fecha_id
+GROUP BY dp.categoria, df.trimestre
+ORDER BY dp.categoria, df.trimestre;
+
+-- Con modelo OLTP (mas JOINs y funciones)
+SELECT
+    pr.categoria,
+    EXTRACT(QUARTER FROM pe.fecha) AS trimestre,
+    SUM(det.cantidad * det.precio_unitario) AS total_ventas,
+    SUM(det.cantidad) AS unidades
+FROM detalle_pedidos det
+JOIN pedidos pe ON det.pedido_id = pe.id
+JOIN productos pr ON det.producto_id = pr.id
+GROUP BY pr.categoria, EXTRACT(QUARTER FROM pe.fecha)
+ORDER BY pr.categoria, trimestre;
+```
+
+Ambas dan el mismo resultado, pero la version dimensional:
+- Usa `df.trimestre` directamente (sin EXTRACT)
+- El monto ya esta precalculado en `fact_ventas`
+- Con millones de filas, la diferencia de rendimiento es significativa
+</details>
+
+**Ejercicio 4:** ¿Cual de estas medidas es aditiva, semi-aditiva o no aditiva? Justifica.
+
+- (a) Cantidad vendida
+- (b) Precio unitario
+- (c) Stock al cierre del dia
+- (d) Monto total de venta
+- (e) Porcentaje de descuento
+
+<details>
+<summary>Ver solucion</summary>
+
+- **(a) Cantidad vendida → Aditiva.** Puedes sumar cantidades por producto, por cliente, por tiempo. Siempre tiene sentido: "vendimos 50 unidades en enero + 60 en febrero = 110 en el bimestre".
+
+- **(b) Precio unitario → No aditiva.** Sumar precios no tiene sentido. Debes usar AVG (precio promedio) o no agregar.
+
+- **(c) Stock al cierre del dia → Semi-aditiva.** Puedes sumar stock de diferentes productos (stock total), pero NO sumar stock de diferentes dias (el stock de lunes + martes no es el stock real). Usa LAST o MAX por tiempo.
+
+- **(d) Monto total de venta → Aditiva.** Puedes sumar montos por cualquier dimension.
+
+- **(e) Porcentaje de descuento → No aditiva.** Sumar porcentajes no tiene sentido. Usa AVG ponderado si necesitas un descuento "promedio".
+</details>
+
+**Ejercicio 5:** Disena un modelo dimensional (estrella) para un hospital que necesita analizar: numero de consultas medicas, duracion promedio de consultas, e ingresos por consulta. Las dimensiones son: medico, paciente, diagnostico y fecha. Escribe el SQL para crear las tablas.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+-- Dimension medico
+CREATE TABLE dim_medico (
+    medico_id INTEGER PRIMARY KEY,
+    nombre VARCHAR(100),
+    especialidad VARCHAR(50),
+    departamento VARCHAR(50)
+);
+
+-- Dimension paciente
+CREATE TABLE dim_paciente (
+    paciente_id INTEGER PRIMARY KEY,
+    nombre VARCHAR(100),
+    fecha_nacimiento DATE,
+    genero VARCHAR(20),
+    ciudad VARCHAR(50),
+    prevision VARCHAR(50)  -- 'FONASA', 'Isapre', etc.
+);
+
+-- Dimension diagnostico
+CREATE TABLE dim_diagnostico (
+    diagnostico_id INTEGER PRIMARY KEY,
+    codigo_cie10 VARCHAR(10),
+    nombre VARCHAR(200),
+    categoria VARCHAR(100),
+    es_cronico BOOLEAN
+);
+
+-- Dimension fecha (igual que antes)
+CREATE TABLE dim_fecha_hospital (
+    fecha_id INTEGER PRIMARY KEY,
+    fecha DATE,
+    dia INTEGER,
+    mes INTEGER,
+    trimestre INTEGER,
+    anio INTEGER,
+    nombre_mes VARCHAR(20),
+    es_fin_de_semana BOOLEAN
+);
+
+-- Tabla de hechos: cada fila es una consulta medica
+CREATE TABLE fact_consultas (
+    consulta_id INTEGER PRIMARY KEY,
+    fecha_id INTEGER REFERENCES dim_fecha_hospital(fecha_id),
+    medico_id INTEGER REFERENCES dim_medico(medico_id),
+    paciente_id INTEGER REFERENCES dim_paciente(paciente_id),
+    diagnostico_id INTEGER REFERENCES dim_diagnostico(diagnostico_id),
+    -- Medidas
+    duracion_minutos INTEGER,          -- aditiva
+    costo_consulta DECIMAL(10,2),      -- aditiva
+    medicamentos_recetados INTEGER     -- aditiva
+);
+
+-- Ejemplo de consulta analitica
+SELECT
+    dm.especialidad,
+    df.trimestre,
+    COUNT(*) AS total_consultas,
+    ROUND(AVG(fc.duracion_minutos), 1) AS duracion_promedio,
+    SUM(fc.costo_consulta) AS ingresos_totales
+FROM fact_consultas fc
+JOIN dim_medico dm ON fc.medico_id = dm.medico_id
+JOIN dim_fecha_hospital df ON fc.fecha_id = df.fecha_id
+GROUP BY dm.especialidad, df.trimestre
+ORDER BY dm.especialidad, df.trimestre;
+```
+</details>
+
+**Ejercicio 6 (Desafio):** Implementa un SCD Tipo 2 para la dimension de clientes. Crea la tabla `dim_cliente_historico` con surrogate key, campos de vigencia (fecha_inicio, fecha_fin) y flag es_actual. Luego simula que Maria Garcia se muda de Santiago a Valparaiso: inserta la nueva version y actualiza la anterior.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+-- Crear dimension con historial
+CREATE TABLE dim_cliente_historico (
+    cliente_sk SERIAL PRIMARY KEY,
+    cliente_id INTEGER NOT NULL,
+    nombre VARCHAR(100),
+    email VARCHAR(100),
+    ciudad VARCHAR(50),
+    fecha_inicio DATE NOT NULL,
+    fecha_fin DATE,
+    es_actual BOOLEAN DEFAULT TRUE
+);
+
+-- Cargar version inicial desde la BD OLTP
+INSERT INTO dim_cliente_historico (cliente_id, nombre, email, ciudad, fecha_inicio)
+SELECT id, nombre, email, ciudad, '2024-01-01'
+FROM clientes;
+
+-- Verificar
+SELECT * FROM dim_cliente_historico WHERE cliente_id = 1;
+-- Maria Garcia, Santiago, fecha_inicio=2024-01-01, es_actual=TRUE
+
+-- Simular cambio: Maria se muda a Valparaiso el 2024-07-01
+BEGIN;
+
+-- 1. Cerrar la version anterior
+UPDATE dim_cliente_historico
+SET fecha_fin = '2024-06-30',
+    es_actual = FALSE
+WHERE cliente_id = 1 AND es_actual = TRUE;
+
+-- 2. Insertar nueva version
+INSERT INTO dim_cliente_historico (cliente_id, nombre, email, ciudad, fecha_inicio)
+VALUES (1, 'Maria Garcia', 'maria@email.com', 'Valparaiso', '2024-07-01');
+
+COMMIT;
+
+-- Verificar el historial
+SELECT * FROM dim_cliente_historico WHERE cliente_id = 1 ORDER BY fecha_inicio;
+```
+
+```
+ cliente_sk │ cliente_id │ nombre       │ ciudad      │ fecha_inicio │ fecha_fin  │ es_actual
+────────────┼────────────┼──────────────┼─────────────┼──────────────┼────────────┼──────────
+      1     │     1      │ Maria Garcia │ Santiago    │ 2024-01-01   │ 2024-06-30 │ FALSE
+     11     │     1      │ Maria Garcia │ Valparaiso │ 2024-07-01   │    NULL    │ TRUE
+```
+
+Para consultar ventas de Maria usando la ciudad **correcta en cada momento**:
+
+```sql
+SELECT dc.ciudad, SUM(fv.monto_total) AS total
+FROM fact_ventas fv
+JOIN dim_fecha df ON fv.fecha_id = df.fecha_id
+JOIN dim_cliente_historico dc ON fv.cliente_id = dc.cliente_id
+    AND df.fecha BETWEEN dc.fecha_inicio AND COALESCE(dc.fecha_fin, '9999-12-31')
+WHERE dc.cliente_id = 1
+GROUP BY dc.ciudad;
+```
+</details>

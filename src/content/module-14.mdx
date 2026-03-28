@@ -1,0 +1,608 @@
+import Callout from "../components/Callout.astro"
+import CommandTable from "../components/CommandTable.astro"
+
+Hasta ahora trabajamos con una base de datos ya disenada (`tienda`). Pero en la vida real, muchas veces **tu** tienes que disenar la estructura de las tablas. ¿Como decides que columnas van en que tabla? ¿Cuando crear una tabla nueva en lugar de agregar columnas? La respuesta es la **normalizacion**.
+
+<Callout type="info" title="¿Por que esto importa para ciencia de datos?">
+  Aunque como analista de datos rara vez disenas bases de datos desde cero, entender normalizacion te ayuda a: (1) comprender por que la BD tiene la estructura que tiene, (2) escribir mejores JOINs al saber como se relacionan las tablas, y (3) detectar problemas de calidad de datos causados por mala normalizacion.
+</Callout>
+
+---
+
+## ¿Que es la normalizacion?
+
+La normalizacion es un proceso de **organizar las columnas y tablas** de una base de datos para:
+
+- **Eliminar datos duplicados** (redundancia)
+- **Evitar anomalias** al insertar, actualizar o eliminar datos
+- **Asegurar consistencia** en toda la base de datos
+
+Imagina que tienes toda la informacion de pedidos en una sola tabla:
+
+```
+ pedido_id │ fecha      │ cliente_nombre │ cliente_email     │ cliente_ciudad │ producto_nombre │ precio │ cantidad
+───────────┼────────────┼────────────────┼───────────────────┼────────────────┼─────────────────┼────────┼─────────
+     1     │ 2024-01-15 │ Maria Garcia   │ maria@email.com   │ Santiago       │ Laptop Pro 15   │1299.99 │    1
+     1     │ 2024-01-15 │ Maria Garcia   │ maria@email.com   │ Santiago       │ Mouse Inalamb.  │  29.99 │    3
+     2     │ 2024-01-20 │ Carlos Lopez   │ carlos@email.com  │ Valparaiso     │ Teclado Mecanico│  89.99 │    1
+     3     │ 2024-02-01 │ Maria Garcia   │ maria@email.com   │ Santiago       │ Silla Ergonomica│ 299.99 │    1
+```
+
+El nombre, email y ciudad de Maria aparecen **3 veces**. Esto genera problemas.
+
+---
+
+## Las anomalias: por que la redundancia es peligrosa
+
+### Anomalia de actualizacion
+
+Si Maria cambia su email, necesitas actualizarlo en **cada fila** donde aparece. Si olvidas una, tienes datos inconsistentes:
+
+```
+ pedido_id │ cliente_nombre │ cliente_email
+───────────┼────────────────┼───────────────────
+     1     │ Maria Garcia   │ maria_new@email.com  ← actualizado
+     3     │ Maria Garcia   │ maria@email.com      ← olvidaste esta!
+```
+
+¿Cual es el email correcto? No se sabe.
+
+### Anomalia de insercion
+
+Si quieres agregar un nuevo cliente que aun no ha hecho pedidos, **no puedes**, porque necesitas un pedido_id para insertar la fila. El cliente no puede existir sin un pedido.
+
+### Anomalia de eliminacion
+
+Si eliminas el unico pedido de Carlos Lopez, **pierdes toda la informacion del cliente**: su nombre, email y ciudad desaparecen.
+
+<Callout type="tip" title="La solucion">
+  La normalizacion resuelve las tres anomalias separando la informacion en tablas independientes conectadas por claves. Exactamente lo que hace nuestra base de datos `tienda`: clientes, productos y pedidos estan en tablas separadas.
+</Callout>
+
+---
+
+## Claves: la base de la normalizacion
+
+Antes de hablar de formas normales, necesitas entender dos conceptos fundamentales:
+
+### Clave primaria (Primary Key)
+
+Una columna (o conjunto de columnas) que identifica de forma **unica** cada fila de la tabla:
+
+```sql
+-- El id identifica unicamente cada cliente
+CREATE TABLE clientes (
+    id SERIAL PRIMARY KEY,  -- clave primaria
+    nombre VARCHAR(100),
+    email VARCHAR(100)
+);
+```
+
+### Clave foranea (Foreign Key)
+
+Una columna que hace **referencia** a la clave primaria de otra tabla. Crea la relacion entre tablas:
+
+```sql
+-- cliente_id referencia a clientes.id
+CREATE TABLE pedidos (
+    id SERIAL PRIMARY KEY,
+    cliente_id INTEGER REFERENCES clientes(id),  -- clave foranea
+    fecha DATE,
+    total DECIMAL(10,2)
+);
+```
+
+### Dependencia funcional
+
+Decimos que la columna B **depende funcionalmente** de la columna A si, dado un valor de A, siempre se obtiene el mismo valor de B. Se escribe `A → B`.
+
+En nuestra tabla `clientes`:
+- `id → nombre` (dado un id, siempre obtienes el mismo nombre)
+- `id → email` (dado un id, siempre obtienes el mismo email)
+- `id → ciudad` (dado un id, siempre obtienes la misma ciudad)
+
+Este concepto es la base de todas las formas normales.
+
+---
+
+## Primera Forma Normal (1FN)
+
+Una tabla esta en **1FN** si:
+
+1. Cada columna tiene **un solo valor** (valores atomicos, no listas ni conjuntos)
+2. Cada fila es **unica** (tiene una clave primaria)
+3. No hay **grupos repetidos** de columnas
+
+### Ejemplo que viola 1FN
+
+```
+ cliente_id │ nombre       │ telefonos
+────────────┼──────────────┼──────────────────────
+     1      │ Maria Garcia │ 555-1234, 555-5678    ← dos valores en una columna!
+     2      │ Carlos Lopez │ 555-8888
+```
+
+La columna `telefonos` tiene multiples valores en una sola celda. Esto hace imposible buscar por un telefono especifico.
+
+### Solucion: separar en tabla aparte
+
+```sql
+CREATE TABLE clientes (
+    id SERIAL PRIMARY KEY,
+    nombre VARCHAR(100)
+);
+
+CREATE TABLE telefonos (
+    id SERIAL PRIMARY KEY,
+    cliente_id INTEGER REFERENCES clientes(id),
+    telefono VARCHAR(20)
+);
+```
+
+```
+ -- clientes              -- telefonos
+ id │ nombre              id │ cliente_id │ telefono
+────┼──────────           ───┼────────────┼──────────
+  1 │ Maria Garcia          1 │     1      │ 555-1234
+  2 │ Carlos Lopez          2 │     1      │ 555-5678
+                              3 │     2      │ 555-8888
+```
+
+Ahora puedes buscar `WHERE telefono = '555-1234'` facilmente.
+
+<Callout type="info" title="Nuestra BD tienda ya cumple 1FN">
+  Todas las tablas de `tienda` tienen valores atomicos y claves primarias. No hay columnas con listas de valores.
+</Callout>
+
+---
+
+## Segunda Forma Normal (2FN)
+
+Una tabla esta en **2FN** si:
+
+1. Esta en 1FN
+2. Cada columna no-clave depende de **toda** la clave primaria (no solo de una parte)
+
+Esto solo aplica cuando la clave primaria es **compuesta** (formada por dos o mas columnas).
+
+### Ejemplo que viola 2FN
+
+Imagina una tabla de detalle de pedidos **mal disenada**:
+
+```
+ pedido_id │ producto_id │ cantidad │ precio_unitario │ nombre_producto │ categoria
+───────────┼─────────────┼──────────┼─────────────────┼─────────────────┼───────────
+     1     │      1      │    1     │     1299.99     │ Laptop Pro 15   │ Electronica
+     1     │      2      │    3     │       29.99     │ Mouse Inalamb.  │ Electronica
+     2     │      3      │    1     │       89.99     │ Teclado Mecanico│ Electronica
+```
+
+La clave primaria es `(pedido_id, producto_id)`. Pero:
+- `nombre_producto` depende solo de `producto_id` (no necesita `pedido_id`)
+- `categoria` depende solo de `producto_id`
+
+Esto viola 2FN: hay columnas que dependen de **parte** de la clave.
+
+### Solucion: separar en dos tablas
+
+```sql
+-- Detalle solo guarda lo que depende de AMBAS claves
+CREATE TABLE detalle_pedidos (
+    pedido_id INTEGER REFERENCES pedidos(id),
+    producto_id INTEGER REFERENCES productos(id),
+    cantidad INTEGER,
+    precio_unitario DECIMAL(10,2),
+    PRIMARY KEY (pedido_id, producto_id)
+);
+
+-- Productos guarda lo que depende solo del producto
+CREATE TABLE productos (
+    id SERIAL PRIMARY KEY,
+    nombre VARCHAR(100),
+    categoria VARCHAR(50)
+);
+```
+
+<Callout type="tip" title="Asi es nuestra BD tienda">
+  Nuestra tabla `detalle_pedidos` solo guarda `pedido_id`, `producto_id`, `cantidad` y `precio_unitario`. El nombre y la categoria del producto estan en la tabla `productos`. Cumple 2FN.
+</Callout>
+
+---
+
+## Tercera Forma Normal (3FN)
+
+Una tabla esta en **3FN** si:
+
+1. Esta en 2FN
+2. Ninguna columna no-clave depende de **otra columna no-clave** (no hay dependencias transitivas)
+
+### Ejemplo que viola 3FN
+
+```
+ empleado_id │ nombre    │ departamento │ ubicacion_depto
+─────────────┼───────────┼──────────────┼────────────────
+      1      │ Sofia     │ Gerencia     │ Piso 5
+      2      │ Juan      │ Ventas       │ Piso 2
+      3      │ Valentina │ Ventas       │ Piso 2
+      4      │ Miguel    │ Tecnologia   │ Piso 3
+```
+
+`ubicacion_depto` depende de `departamento`, no directamente de `empleado_id`. La cadena es:
+`empleado_id → departamento → ubicacion_depto`
+
+Esto es una **dependencia transitiva**: si cambia la ubicacion de Ventas, hay que actualizarla en multiples filas.
+
+### Solucion: tabla separada para departamentos
+
+```sql
+CREATE TABLE departamentos (
+    id SERIAL PRIMARY KEY,
+    nombre VARCHAR(50),
+    ubicacion VARCHAR(50)
+);
+
+CREATE TABLE empleados (
+    id SERIAL PRIMARY KEY,
+    nombre VARCHAR(100),
+    departamento_id INTEGER REFERENCES departamentos(id),
+    salario DECIMAL(10,2)
+);
+```
+
+Ahora la ubicacion se guarda **una sola vez** en la tabla `departamentos`.
+
+---
+
+## Resumen de formas normales
+
+<CommandTable commands={[
+  { command: "1FN", description: "Valores atomicos (una celda = un valor). No hay listas ni arrays en una columna. Cada fila es unica." },
+  { command: "2FN", description: "Toda columna no-clave depende de TODA la clave primaria (no solo de una parte). Aplica a claves compuestas." },
+  { command: "3FN", description: "No hay dependencias transitivas: cada columna no-clave depende directamente de la clave primaria, no de otra columna no-clave." },
+]} />
+
+<Callout type="info" title="¿Existen mas formas normales?">
+  Si. Existen la BCNF (Boyce-Codd), 4FN y 5FN. Pero en la practica, llegar a 3FN es suficiente para la gran mayoria de bases de datos. Las formas superiores abordan situaciones muy especificas que rara vez se encuentran en el dia a dia.
+</Callout>
+
+---
+
+## Nuestra BD tienda: analisis de normalizacion
+
+Veamos como nuestra base de datos cumple con las formas normales:
+
+```
+ productos(id, nombre, precio, categoria, stock, fecha_creacion)
+   → 1FN ✓ valores atomicos, id es PK
+   → 2FN ✓ clave simple (id), todo depende de id
+   → 3FN ✓ ninguna columna depende de otra columna no-clave
+
+ clientes(id, nombre, email, ciudad, fecha_registro)
+   → 1FN ✓
+   → 2FN ✓
+   → 3FN ✓
+
+ pedidos(id, cliente_id, fecha, total, estado)
+   → 1FN ✓
+   → 2FN ✓
+   → 3FN ✓ (total podria calcularse de detalle_pedidos, pero es un atajo aceptable)
+
+ detalle_pedidos(id, pedido_id, producto_id, cantidad, precio_unitario)
+   → 1FN ✓
+   → 2FN ✓ precio_unitario depende del momento de la compra, no solo del producto
+   → 3FN ✓
+
+ empleados(id, nombre, departamento, salario, fecha_contratacion, jefe_id)
+   → 1FN ✓
+   → 2FN ✓
+   → 3FN ⚠ departamento como texto podria separarse en una tabla departamentos
+```
+
+<Callout type="tip" title="Normalizacion pragmatica">
+  La tabla `empleados` tiene `departamento` como texto en lugar de una referencia a una tabla `departamentos`. En un sistema real, esto podria generar inconsistencias (alguien escribe "Tecnologia" y otro "tecnologia"). Sin embargo, para un curso introductorio, esta simplificacion es aceptable. En produccion, normalizarias esto.
+</Callout>
+
+---
+
+## Desnormalizacion: cuando romper las reglas
+
+A veces, la normalizacion estricta genera consultas con demasiados JOINs que son lentas. En esos casos, se **desnormaliza** intencionalmente para mejorar el rendimiento.
+
+### Cuando desnormalizar
+
+- **Consultas de lectura muy frecuentes** donde los JOINs son costosos
+- **Reportes y dashboards** que necesitan respuesta rapida
+- **Data warehouses** (almacenes de datos) para analitica
+- **Campos calculados** que se consultan constantemente (ej: `total` en pedidos)
+
+### Ejemplo: el campo total en pedidos
+
+En nuestra BD, `pedidos.total` es un dato **desnormalizado**: podria calcularse sumando `cantidad * precio_unitario` de `detalle_pedidos`. Pero almacenarlo evita recalcular el total cada vez que se consulta:
+
+```sql
+-- Sin desnormalizacion: calcular el total cada vez
+SELECT p.id, p.fecha,
+    SUM(dp.cantidad * dp.precio_unitario) AS total
+FROM pedidos p
+JOIN detalle_pedidos dp ON p.id = dp.pedido_id
+GROUP BY p.id, p.fecha;
+
+-- Con desnormalizacion: leer directamente
+SELECT id, fecha, total FROM pedidos;
+```
+
+La segunda consulta es mucho mas rapida y simple.
+
+### Ejemplo: nombre de categoria como texto
+
+En `productos`, `categoria` es un VARCHAR en lugar de un `categoria_id` con tabla aparte. Esto es una desnormalizacion consciente:
+
+<CommandTable commands={[
+  { command: "Normalizado", description: "productos.categoria_id → categorias(id, nombre). Requiere JOIN para mostrar el nombre." },
+  { command: "Desnormalizado", description: "productos.categoria = 'Electronica'. No requiere JOIN, pero riesgo de inconsistencia." },
+]} />
+
+<Callout type="warning" title="Desnormalizar con conciencia">
+  La desnormalizacion es una **decision deliberada** basada en el analisis de rendimiento. Nunca desnormalices por pereza o por no saber normalizar. Primero normaliza correctamente, y luego desnormaliza donde el rendimiento lo justifique, documentando la razon.
+</Callout>
+
+---
+
+## Disenar una tabla normalizada: paso a paso
+
+Si necesitas crear una nueva estructura, sigue estos pasos:
+
+1. **Lista todas las entidades** (sustantivos: cliente, producto, pedido, etc.)
+2. **Lista los atributos** de cada entidad (columnas)
+3. **Identifica las claves primarias** (¿que identifica unicamente a cada registro?)
+4. **Identifica las relaciones** (¿que entidades se conectan entre si?)
+5. **Aplica 1FN**: ¿hay columnas con multiples valores? → separar en tabla
+6. **Aplica 2FN**: ¿hay columnas que dependen de parte de la clave? → mover a otra tabla
+7. **Aplica 3FN**: ¿hay dependencias transitivas? → crear tabla intermedia
+8. **Evalua desnormalizacion**: ¿hay consultas criticas que se benefician de redundancia controlada?
+
+---
+
+### Ejercicios
+
+**Ejercicio 1:** Identifica que forma normal viola esta tabla y explica como la normalizarias:
+
+```
+ orden_id │ cliente │ email          │ productos
+──────────┼─────────┼────────────────┼──────────────────────────
+    1     │ Maria   │ maria@mail.com │ Laptop, Mouse, Teclado
+    2     │ Carlos  │ carlos@mail.com│ Monitor
+    3     │ Maria   │ maria@mail.com │ Silla
+```
+
+<details>
+<summary>Ver solucion</summary>
+
+Viola **1FN**: la columna `productos` tiene multiples valores en una celda ("Laptop, Mouse, Teclado").
+
+Tambien hay redundancia: Maria aparece dos veces con su email repetido (potencial anomalia de actualizacion).
+
+Normalizacion:
+
+```sql
+-- Separar en 3 tablas
+CREATE TABLE clientes (
+    id SERIAL PRIMARY KEY,
+    nombre VARCHAR(100),
+    email VARCHAR(100)
+);
+
+CREATE TABLE ordenes (
+    id SERIAL PRIMARY KEY,
+    cliente_id INTEGER REFERENCES clientes(id),
+    fecha DATE
+);
+
+CREATE TABLE detalle_ordenes (
+    id SERIAL PRIMARY KEY,
+    orden_id INTEGER REFERENCES ordenes(id),
+    producto VARCHAR(100)
+);
+```
+
+Ahora cada producto tiene su propia fila y los datos del cliente estan en un solo lugar.
+</details>
+
+**Ejercicio 2:** Mira la tabla `empleados` de nuestra BD. ¿Cumple estrictamente con 3FN? Si no, ¿como la normalizarias? Escribe el SQL para crear la estructura normalizada.
+
+<details>
+<summary>Ver solucion</summary>
+
+La tabla `empleados` tiene `departamento` como texto. Si el departamento tuviera mas atributos (ubicacion, gerente, presupuesto), seria una dependencia transitiva: `id → departamento → ubicacion_depto`.
+
+Normalizacion estricta:
+
+```sql
+CREATE TABLE departamentos (
+    id SERIAL PRIMARY KEY,
+    nombre VARCHAR(50) NOT NULL UNIQUE,
+    ubicacion VARCHAR(100)
+);
+
+CREATE TABLE empleados_normalizado (
+    id SERIAL PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL,
+    departamento_id INTEGER REFERENCES departamentos(id),
+    salario DECIMAL(10,2),
+    fecha_contratacion DATE,
+    jefe_id INTEGER REFERENCES empleados_normalizado(id)
+);
+
+-- Poblar departamentos
+INSERT INTO departamentos (nombre) VALUES
+    ('Gerencia'), ('Ventas'), ('Tecnologia'), ('Soporte');
+
+-- Migrar empleados
+INSERT INTO empleados_normalizado (id, nombre, departamento_id, salario, fecha_contratacion, jefe_id)
+SELECT e.id, e.nombre, d.id, e.salario, e.fecha_contratacion, e.jefe_id
+FROM empleados e
+JOIN departamentos d ON e.departamento = d.nombre;
+```
+</details>
+
+**Ejercicio 3:** ¿Por que `detalle_pedidos` guarda `precio_unitario` si ese dato ya existe en `productos.precio`? ¿Es redundancia o tiene una razon valida?
+
+<details>
+<summary>Ver solucion</summary>
+
+**No es redundancia innecesaria**, es una desnormalizacion con una razon muy valida: el precio de un producto **puede cambiar con el tiempo**.
+
+Si `detalle_pedidos` solo guardara `producto_id` y obtuviera el precio de `productos`, entonces al subir el precio de un producto, **todos los pedidos historicos** mostrarian el precio nuevo, no el que realmente se pago.
+
+`precio_unitario` en `detalle_pedidos` captura el precio **en el momento de la compra**. Es un dato historico que no debe cambiar aunque el precio actual del producto cambie.
+
+Este patron se llama **snapshot de precio** y es una practica estandar en sistemas de ventas.
+</details>
+
+**Ejercicio 4:** Disena una tabla para un sistema de biblioteca que almacene: libros, autores (un libro puede tener varios autores) y prestamos. Aplica al menos 3FN.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+-- Autores
+CREATE TABLE autores (
+    id SERIAL PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL,
+    nacionalidad VARCHAR(50)
+);
+
+-- Libros
+CREATE TABLE libros (
+    id SERIAL PRIMARY KEY,
+    titulo VARCHAR(200) NOT NULL,
+    isbn VARCHAR(20) UNIQUE,
+    anio_publicacion INTEGER,
+    genero VARCHAR(50)
+);
+
+-- Relacion muchos-a-muchos: un libro puede tener varios autores
+CREATE TABLE libro_autores (
+    libro_id INTEGER REFERENCES libros(id),
+    autor_id INTEGER REFERENCES autores(id),
+    PRIMARY KEY (libro_id, autor_id)
+);
+
+-- Socios de la biblioteca
+CREATE TABLE socios (
+    id SERIAL PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL,
+    email VARCHAR(100)
+);
+
+-- Prestamos
+CREATE TABLE prestamos (
+    id SERIAL PRIMARY KEY,
+    libro_id INTEGER REFERENCES libros(id),
+    socio_id INTEGER REFERENCES socios(id),
+    fecha_prestamo DATE DEFAULT CURRENT_DATE,
+    fecha_devolucion DATE,
+    estado VARCHAR(20) DEFAULT 'prestado'
+);
+```
+
+Justificacion:
+- **1FN**: Un libro con varios autores no se resuelve con una columna "autores" (lista), sino con la tabla intermedia `libro_autores`.
+- **2FN**: `libro_autores` tiene clave compuesta y no hay dependencias parciales.
+- **3FN**: No hay dependencias transitivas. El genero depende del libro, la nacionalidad del autor.
+</details>
+
+**Ejercicio 5:** Consulta la BD `tienda` y verifica que no hay datos inconsistentes. Busca si algun producto tiene una categoria que no sea 'Electronica', 'Muebles' o 'Accesorios'. ¿Que restriccion le falta a la tabla para prevenir esto?
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+-- Verificar categorias existentes
+SELECT DISTINCT categoria FROM productos ORDER BY categoria;
+
+-- Buscar categorias inesperadas
+SELECT * FROM productos
+WHERE categoria NOT IN ('Electronica', 'Muebles', 'Accesorios');
+```
+
+La tabla `productos` no tiene una restriccion que limite las categorias validas. Para prevenirlo, podrias:
+
+```sql
+-- Opcion 1: restriccion CHECK
+ALTER TABLE productos
+ADD CONSTRAINT chk_categoria
+CHECK (categoria IN ('Electronica', 'Muebles', 'Accesorios'));
+
+-- Opcion 2: tabla de categorias (normalizacion)
+CREATE TABLE categorias (
+    id SERIAL PRIMARY KEY,
+    nombre VARCHAR(50) NOT NULL UNIQUE
+);
+
+-- Y cambiar productos.categoria por productos.categoria_id con FK
+```
+
+La opcion 2 (normalizar) es mejor si las categorias pueden crecer o tener mas atributos. La opcion 1 (CHECK) es mas simple si las categorias son fijas y pocas.
+</details>
+
+**Ejercicio 6 (Desafio):** Tienes esta tabla desnormalizada de un e-commerce. Identificar las anomalias, normalizar a 3FN y escribir el SQL para crear las tablas:
+
+```
+ venta_id │ fecha │ cliente │ email │ ciudad │ producto │ categoria │ precio │ cantidad │ vendedor │ comision_pct
+```
+
+<details>
+<summary>Ver solucion</summary>
+
+**Anomalias:**
+- Actualizacion: cambiar email de un cliente requiere actualizar multiples filas
+- Insercion: no puedes registrar un producto sin una venta
+- Eliminacion: borrar la unica venta de un cliente borra toda su informacion
+
+**Normalizacion a 3FN:**
+
+```sql
+CREATE TABLE clientes_norm (
+    id SERIAL PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL,
+    email VARCHAR(100) UNIQUE,
+    ciudad VARCHAR(50)
+);
+
+CREATE TABLE categorias_norm (
+    id SERIAL PRIMARY KEY,
+    nombre VARCHAR(50) NOT NULL UNIQUE
+);
+
+CREATE TABLE productos_norm (
+    id SERIAL PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL,
+    categoria_id INTEGER REFERENCES categorias_norm(id),
+    precio DECIMAL(10,2) NOT NULL
+);
+
+CREATE TABLE vendedores (
+    id SERIAL PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL,
+    comision_pct DECIMAL(5,2)
+);
+
+CREATE TABLE ventas (
+    id SERIAL PRIMARY KEY,
+    fecha DATE DEFAULT CURRENT_DATE,
+    cliente_id INTEGER REFERENCES clientes_norm(id),
+    vendedor_id INTEGER REFERENCES vendedores(id)
+);
+
+CREATE TABLE detalle_ventas (
+    id SERIAL PRIMARY KEY,
+    venta_id INTEGER REFERENCES ventas(id),
+    producto_id INTEGER REFERENCES productos_norm(id),
+    cantidad INTEGER NOT NULL,
+    precio_unitario DECIMAL(10,2) NOT NULL  -- snapshot del precio al momento
+);
+```
+
+Entidades identificadas: clientes, categorias, productos, vendedores, ventas, detalle_ventas. Cada una solo contiene los atributos que dependen directamente de su clave primaria.
+</details>

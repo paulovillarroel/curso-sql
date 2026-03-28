@@ -60,6 +60,63 @@ ORDER BY departamento, salario DESC;
 
 Cada empleado conserva su fila individual, pero ahora tiene una columna extra con el promedio de su departamento. Eso es una **funcion de ventana**.
 
+### Paso a paso: como piensa PostgreSQL una funcion de ventana
+
+Para entender bien las funciones de ventana, veamos **que hace PostgreSQL internamente** cuando ejecutas esta consulta:
+
+```sql
+SELECT nombre, departamento, salario,
+    SUM(salario) OVER (PARTITION BY departamento) AS total_depto
+FROM empleados;
+```
+
+**Paso 1: Ejecutar el FROM y WHERE** (obtener todas las filas)
+
+PostgreSQL lee todas las filas de `empleados` como lo haria normalmente.
+
+**Paso 2: Dividir en ventanas** (PARTITION BY)
+
+Agrupa las filas segun `PARTITION BY departamento`, pero **no las colapsa** (esa es la diferencia con GROUP BY):
+
+```
+ Ventana "Gerencia":   [Sofia – 85000]
+ Ventana "Soporte":    [Ricardo – 38000, Patricia – 36000]
+ Ventana "Tecnologia": [Miguel – 62000, Alejandro – 58000, Camila – 55000]
+ Ventana "Ventas":     [Juan – 45000, Valentina – 42000, Fernanda – 40000, Daniela – 41000]
+```
+
+**Paso 3: Calcular la funcion dentro de cada ventana**
+
+Calcula `SUM(salario)` para cada ventana por separado:
+- Gerencia: 85000
+- Soporte: 74000
+- Tecnologia: 175000
+- Ventas: 168000
+
+**Paso 4: Pegar el resultado en cada fila**
+
+Cada empleado recibe el valor calculado para **su** ventana:
+
+```
+ nombre           │ departamento │ salario │ total_depto
+──────────────────┼──────────────┼─────────┼────────────
+ Sofia Mendez     │ Gerencia     │  85000  │  85000    ← total de Gerencia
+ Ricardo Soto     │ Soporte      │  38000  │  74000    ← total de Soporte
+ Patricia Herrera │ Soporte      │  36000  │  74000    ← mismo: total de Soporte
+ Miguel A. Torres │ Tecnologia   │  62000  │ 175000    ← total de Tecnologia
+ ...
+```
+
+La clave: **la fila no desaparece**. Cada empleado conserva su fila individual, y el resultado de la funcion de ventana se "pega" como una columna extra.
+
+<Callout type="info" title="GROUP BY colapsa, OVER pega">
+  La diferencia fundamental es esta:
+  - `GROUP BY departamento` → **4 filas** (una por departamento, pierdes los nombres)
+  - `SUM(...) OVER (PARTITION BY departamento)` → **10 filas** (una por empleado, cada una con el total de su departamento)
+
+  Piensalo asi: GROUP BY es un **resumen** que destruye el detalle. OVER es una **etiqueta** que agrega informacion a cada fila sin destruir nada.
+</Callout>
+
 ### La clausula OVER: anatomia de una funcion de ventana
 
 La clave es `OVER()`. Cualquier funcion de agregacion (SUM, AVG, COUNT, etc.) se convierte en funcion de ventana al agregarle `OVER()`:
