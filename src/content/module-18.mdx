@@ -1,0 +1,573 @@
+import Callout from "../components/Callout.astro"
+import CommandTable from "../components/CommandTable.astro"
+
+Las bases de datos tradicionales son excelentes para buscar coincidencias exactas: "dame el producto con id 5" o "clientes en Santiago". Pero que pasa cuando necesitas buscar por **significado**? Por ejemplo, "productos similares a auriculares" o "textos que hablen de tecnologia". Para eso existen las **bases de datos vectoriales**, y PostgreSQL puede hacerlo gracias a **pgvector**.
+
+---
+
+## Que son los vectores?
+
+Un **vector** es simplemente una lista ordenada de numeros. En el contexto de datos, representan una posicion en un espacio multidimensional.
+
+```
+ Ejemplo en 2 dimensiones (facil de visualizar):
+
+ "Auriculares Bluetooth"  → [0.8, 0.3]     (mucha tecnologia, poco hogar)
+ "Laptop Pro"             → [0.9, 0.2]     (mucha tecnologia, poco hogar)
+ "Mesa de Comedor"        → [0.1, 0.9]     (poca tecnologia, mucho hogar)
+ "Lampara LED"            → [0.4, 0.7]     (algo de tecnologia, bastante hogar)
+
+                tecnologia
+                    ↑
+              1.0   |  • Laptop
+                    |  • Auriculares
+              0.5   |
+                    |        • Lampara
+                    |              • Mesa
+              0.0   +-------------------→ hogar
+                   0.0     0.5     1.0
+```
+
+Productos **cercanos** en este espacio son **similares** en significado. "Auriculares" y "Laptop" estan cerca porque ambos son tecnologia.
+
+---
+
+## Que son los embeddings?
+
+En la practica, los vectores no se crean a mano. Se generan con modelos de inteligencia artificial llamados **modelos de embeddings**. Estos modelos convierten texto (o imagenes, audio, etc.) en vectores de cientos o miles de dimensiones.
+
+```
+ Modelo de embeddings (ej: OpenAI, Sentence Transformers)
+
+ "Auriculares inalambricos"  →  [0.023, -0.841, 0.156, ..., 0.447]  (1536 dimensiones)
+ "Audifonos Bluetooth"       →  [0.019, -0.838, 0.161, ..., 0.442]  (muy similar!)
+ "Mesa de madera"            →  [0.712, 0.203, -0.445, ..., 0.089]  (muy diferente)
+```
+
+<Callout type="info" title="Modelos de embeddings populares">
+**Cloud (APIs):**
+- **OpenAI** (`text-embedding-3-small`): 1536 dimensiones
+- **Google** (`text-embedding-004`): 768 dimensiones
+- **Cohere** (`embed-v3`): 1024 dimensiones
+- **Voyage AI** (`voyage-3`): 1024 dimensiones
+
+**Locales (puedes correrlos en tu maquina con [Ollama](https://ollama.com/)):**
+- **nomic-embed-text**: 768 dimensiones — ligero y rapido
+- **mxbai-embed-large**: 1024 dimensiones — buen balance calidad/velocidad
+- **snowflake-arctic-embed**: 1024 dimensiones — alto rendimiento
+- **all-minilm** (Sentence Transformers): 384 dimensiones — el mas liviano
+
+No necesitas entrenar estos modelos. Solo les envias texto y te devuelven el vector.
+</Callout>
+
+Con Ollama puedes generar embeddings localmente sin depender de APIs externas:
+
+```bash
+ollama pull nomic-embed-text
+curl http://localhost:11434/api/embeddings -d '{"model": "nomic-embed-text", "prompt": "Auriculares Bluetooth"}'
+```
+
+---
+
+## Para que sirve la busqueda vectorial?
+
+La busqueda vectorial te permite encontrar elementos **semanticamente similares**, no solo coincidencias exactas de texto:
+
+| Caso de uso | Busqueda tradicional | Busqueda vectorial |
+|---|---|---|
+| Productos similares | `WHERE categoria = 'Electronica'` | Productos con descripcion similar |
+| Busqueda de texto | `WHERE nombre LIKE '%auric%'` | "audifonos inalambricos" encuentra "Auriculares Bluetooth" |
+| Recomendaciones | Reglas manuales complejas | Productos cercanos en el espacio vectorial |
+| Deteccion de duplicados | Comparacion exacta | Textos con el mismo significado |
+| RAG (IA generativa) | No aplica | Buscar contexto relevante para un LLM |
+
+---
+
+## pgvector: vectores en PostgreSQL
+
+**pgvector** es una extension de PostgreSQL que agrega soporte para almacenar y buscar vectores. No necesitas una base de datos separada — tus vectores conviven con tus datos relacionales.
+
+### Instalacion
+
+<Callout type="warning" title="Instalacion del servidor">
+pgvector debe estar instalado a nivel del servidor PostgreSQL antes de poder usar `CREATE EXTENSION`. Revisa las instrucciones segun tu sistema operativo.
+</Callout>
+
+**Linux (Debian/Ubuntu):**
+
+```bash
+sudo apt install postgresql-17-pgvector
+```
+
+**macOS (Homebrew):**
+
+```bash
+brew install pgvector
+```
+
+**Windows:**
+
+Si instalaste PostgreSQL con el instalador de EDB, puedes compilar pgvector con Visual Studio, o usar **Docker** que es la opcion mas simple. Tambien puedes usar [pgvector para Windows](https://github.com/pgvector/pgvector#windows) siguiendo las instrucciones del repositorio oficial.
+
+**Docker (cualquier sistema operativo):**
+
+```bash
+docker run -e POSTGRES_PASSWORD=postgres -p 5432:5432 pgvector/pgvector:pg17
+```
+
+Una vez instalado en el servidor, activa la extension dentro de tu base de datos:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+```
+
+### El tipo de dato vector
+
+pgvector agrega el tipo `vector(n)` donde `n` es el numero de dimensiones:
+
+```sql
+-- Crear una tabla con una columna vectorial
+CREATE TABLE productos_embeddings (
+  id SERIAL PRIMARY KEY,
+  producto_id INTEGER REFERENCES productos(id),
+  descripcion TEXT,
+  embedding vector(3)  -- vector de 3 dimensiones (ejemplo simplificado)
+);
+```
+
+En produccion usarias vectores de 384, 768 o 1536 dimensiones, pero para aprender usaremos dimensiones pequenas.
+
+---
+
+## Operaciones basicas
+
+### Insertar vectores
+
+```sql
+-- Los vectores se escriben como arrays entre corchetes
+INSERT INTO productos_embeddings (producto_id, descripcion, embedding)
+VALUES
+  (1, 'Laptop de alta gama para profesionales', '[0.8, 0.2, 0.9]'),
+  (2, 'Silla ergonomica para oficina', '[0.1, 0.9, 0.3]'),
+  (3, 'Teclado mecanico para gaming', '[0.7, 0.3, 0.8]'),
+  (4, 'Escritorio de madera ajustable', '[0.2, 0.8, 0.4]'),
+  (5, 'Monitor curvo 4K', '[0.9, 0.2, 0.7]'),
+  (6, 'Lampara de escritorio LED', '[0.3, 0.7, 0.5]');
+```
+
+### Consultar vectores
+
+```sql
+SELECT producto_id, descripcion, embedding
+FROM productos_embeddings;
+```
+
+```
+ producto_id |              descripcion               | embedding
+-------------+----------------------------------------+-----------
+           1 | Laptop de alta gama para profesionales | [0.8,0.2,0.9]
+           2 | Silla ergonomica para oficina          | [0.1,0.9,0.3]
+           3 | Teclado mecanico para gaming           | [0.7,0.3,0.8]
+           ...
+```
+
+---
+
+## Busqueda por similitud
+
+El corazon de pgvector son los **operadores de distancia**. Cuanto menor la distancia entre dos vectores, mas similares son.
+
+### Operadores de distancia
+
+| Operador | Tipo de distancia | Uso tipico |
+|---|---|---|
+| `<->` | Distancia euclidiana (L2) | Distancia geometrica directa |
+| `<=>` | Distancia coseno | Similitud de significado (el mas usado) |
+| `<#>` | Producto interno negativo | Cuando los vectores estan normalizados |
+
+### Ejemplo: encontrar productos similares
+
+Supongamos que un usuario esta viendo la "Laptop de alta gama" con embedding `[0.8, 0.2, 0.9]`. Busquemos productos similares:
+
+```sql
+-- Encontrar los 3 productos mas similares a la Laptop
+SELECT
+  producto_id,
+  descripcion,
+  embedding <=> '[0.8, 0.2, 0.9]' AS distancia
+FROM productos_embeddings
+WHERE producto_id != 1  -- excluir el producto mismo
+ORDER BY distancia
+LIMIT 3;
+```
+
+```
+ producto_id |          descripcion           |      distancia
+-------------+--------------------------------+--------------------
+           3 | Teclado mecanico para gaming   | 0.0134...
+           5 | Monitor curvo 4K               | 0.0210...
+           6 | Lampara de escritorio LED      | 0.2845...
+```
+
+El teclado y el monitor son los mas similares a la laptop — ambos son tecnologia. La lampara esta mas lejos, y la silla y escritorio estarian aun mas lejos.
+
+<Callout type="tip" title="Distancia coseno vs euclidiana">
+La **distancia coseno** (`<=>`) mide el angulo entre vectores, ignorando su magnitud. Es ideal cuando te importa la **direccion** (significado) y no la escala. La **distancia euclidiana** (`<->`) mide la distancia directa en el espacio. Para busqueda semantica, usa coseno.
+</Callout>
+
+---
+
+## Combinando vectores con SQL tradicional
+
+La ventaja de pgvector es que puedes combinar busqueda vectorial con todo el SQL que ya conoces:
+
+### Busqueda con filtros
+
+```sql
+-- Productos similares a "laptop" que ademas cuesten menos de $500
+-- y tengan stock disponible
+SELECT
+  p.nombre,
+  p.precio,
+  p.stock,
+  pe.embedding <=> '[0.8, 0.2, 0.9]' AS similitud
+FROM productos_embeddings pe
+JOIN productos p ON pe.producto_id = p.id
+WHERE p.precio < 500
+  AND p.stock > 0
+ORDER BY similitud
+LIMIT 5;
+```
+
+### Busqueda con agregacion
+
+```sql
+-- Categoria con productos mas similares a un vector de busqueda
+SELECT
+  p.categoria,
+  COUNT(*) AS total_similares,
+  AVG(pe.embedding <=> '[0.8, 0.2, 0.9]') AS distancia_promedio
+FROM productos_embeddings pe
+JOIN productos p ON pe.producto_id = p.id
+GROUP BY p.categoria
+ORDER BY distancia_promedio
+LIMIT 3;
+```
+
+---
+
+## Indices para vectores
+
+Sin un indice, pgvector compara tu vector contra **todos** los vectores de la tabla (busqueda exacta). Con millones de registros, esto es muy lento. Los indices vectoriales sacrifican un poco de precision por mucha velocidad.
+
+### IVFFlat (Inverted File Index)
+
+Divide los vectores en grupos (listas) y solo busca en los grupos mas cercanos:
+
+```sql
+-- Crear un indice IVFFlat
+CREATE INDEX idx_embeddings_ivfflat
+ON productos_embeddings
+USING ivfflat (embedding vector_cosine_ops)
+WITH (lists = 100);
+```
+
+```
+ Sin indice:    Busca en TODOS los vectores (exacto pero lento)
+ Con IVFFlat:   Busca solo en los clusters cercanos (rapido, ~99% precision)
+
+ ┌──────────────────────────────────┐
+ │  ●  ●       ○  ○  ○     ○       │
+ │    ●  ●      ○  ○    ○          │   ● = cluster cercano (se busca)
+ │  ●       △  △     ○             │   ○ = otro cluster (se ignora)
+ │         △  △  △      ○  ○       │   △ = otro cluster (se ignora)
+ │  ★        △           ○         │   ★ = vector de busqueda
+ └──────────────────────────────────┘
+```
+
+<Callout type="info" title="Cuantas listas usar?">
+Una regla general: usa `sqrt(n)` listas, donde `n` es el numero de filas. Para 1 millon de vectores, usa ~1000 listas. Mas listas = mas rapido pero necesita mas memoria y puede perder precision.
+</Callout>
+
+### HNSW (Hierarchical Navigable Small World)
+
+Un indice mas moderno y generalmente mas preciso que IVFFlat:
+
+```sql
+-- Crear un indice HNSW
+CREATE INDEX idx_embeddings_hnsw
+ON productos_embeddings
+USING hnsw (embedding vector_cosine_ops)
+WITH (m = 16, ef_construction = 64);
+```
+
+### Comparacion de indices
+
+| Caracteristica | IVFFlat | HNSW |
+|---|---|---|
+| Velocidad de busqueda | Rapida | Muy rapida |
+| Precision | Buena (~95-99%) | Muy buena (~99%+) |
+| Tiempo de creacion | Rapido | Lento |
+| Uso de memoria | Bajo | Alto |
+| Necesita datos previos | Si (para entrenar clusters) | No |
+| Recomendado para | Datasets grandes, recursos limitados | Maxima calidad de busqueda |
+
+<Callout type="performance" title="Importante sobre IVFFlat">
+El indice IVFFlat requiere que la tabla ya tenga datos al momento de crearse, porque necesita calcular los centroides de los clusters. Si insertas muchos datos nuevos despues, considera recrear el indice. HNSW no tiene esta limitacion.
+</Callout>
+
+---
+
+## Ejemplo practico: busqueda semantica en la tienda
+
+Veamos un escenario completo integrando pgvector con nuestra base de datos `tienda`. Imagina que quieres agregar busqueda inteligente de productos:
+
+### Paso 1: Crear la tabla de embeddings
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- Tabla para almacenar embeddings de productos
+CREATE TABLE producto_embeddings (
+  id SERIAL PRIMARY KEY,
+  producto_id INTEGER REFERENCES productos(id) ON DELETE CASCADE,
+  embedding vector(384),  -- Sentence Transformers dimension
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(producto_id)
+);
+```
+
+### Paso 2: Insertar embeddings (simulados)
+
+En produccion, generarias los embeddings con un modelo de IA. Aqui simulamos con vectores aleatorios para mostrar la mecanica:
+
+```sql
+-- Insertar embeddings simulados para los productos existentes
+INSERT INTO producto_embeddings (producto_id, embedding)
+SELECT
+  id,
+  -- En produccion: llamar API de embeddings con el nombre del producto
+  -- Aqui generamos un vector aleatorio de 384 dimensiones
+  (
+    SELECT array_agg(random())::vector(384)
+    FROM generate_series(1, 384)
+  )
+FROM productos;
+```
+
+### Paso 3: Crear indice
+
+```sql
+CREATE INDEX idx_producto_emb_hnsw
+ON producto_embeddings
+USING hnsw (embedding vector_cosine_ops);
+```
+
+### Paso 4: Buscar productos similares
+
+```sql
+-- Funcion para buscar productos similares a uno dado
+-- Dado el producto con id = 1, encontrar los 5 mas similares
+SELECT
+  p.id,
+  p.nombre,
+  p.precio,
+  p.categoria,
+  pe.embedding <=> query.embedding AS distancia
+FROM producto_embeddings pe
+JOIN productos p ON pe.producto_id = p.id
+CROSS JOIN (
+  SELECT embedding
+  FROM producto_embeddings
+  WHERE producto_id = 1
+) query
+WHERE pe.producto_id != 1
+ORDER BY distancia
+LIMIT 5;
+```
+
+### Paso 5: Busqueda por texto
+
+```sql
+-- En una aplicacion real, convertirias el texto del usuario a un embedding
+-- usando un modelo de IA, y luego buscarias los mas cercanos:
+
+-- Pseudocodigo del flujo:
+-- 1. Usuario escribe: "necesito algo para escuchar musica"
+-- 2. Tu app convierte eso a un vector: get_embedding("necesito algo para escuchar musica")
+-- 3. Buscas en PostgreSQL:
+
+-- SELECT p.nombre, p.precio
+-- FROM producto_embeddings pe
+-- JOIN productos p ON pe.producto_id = p.id
+-- ORDER BY pe.embedding <=> $1  -- $1 = vector del texto del usuario
+-- LIMIT 5;
+```
+
+<Callout type="info" title="El embedding viene de tu aplicacion">
+pgvector **no genera embeddings**. Tu aplicacion (Python, Node.js, etc.) debe llamar a un modelo de embeddings y luego enviar el vector resultante a PostgreSQL. pgvector solo se encarga de almacenar y buscar eficientemente.
+</Callout>
+
+---
+
+## Buenas practicas
+
+1. **Elige la dimension correcta**: Mas dimensiones = mas precision pero mas almacenamiento y busqueda mas lenta. 384 dimensiones suele ser un buen balance.
+
+2. **Siempre crea un indice**: Sin indice, cada busqueda recorre toda la tabla. Con mas de unos miles de filas, es imprescindible.
+
+3. **Usa distancia coseno para texto**: Para embeddings de texto, la distancia coseno (`<=>`) es casi siempre la mejor opcion.
+
+4. **Normaliza si puedes**: Si tus vectores estan normalizados (longitud 1), el producto interno (`<#>`) es equivalente al coseno pero mas rapido.
+
+5. **Combina con filtros SQL**: No hagas busqueda vectorial pura. Filtra primero por columnas tradicionales (categoria, precio, stock) para reducir el espacio de busqueda.
+
+6. **Monitorea con EXPLAIN ANALYZE**: Los indices vectoriales tambien aparecen en EXPLAIN, asi que puedes verificar que se estan usando:
+
+```sql
+EXPLAIN ANALYZE
+SELECT producto_id
+FROM producto_embeddings
+ORDER BY embedding <=> '[0.1, 0.2, ...]'::vector(384)
+LIMIT 10;
+```
+
+---
+
+## Resumen
+
+```
+ Base de datos vectorial con pgvector:
+
+ ┌──────────────────────────────────────────────────────────────┐
+ │                     PostgreSQL + pgvector                     │
+ │                                                              │
+ │  ┌─────────────────────┐    ┌─────────────────────────────┐  │
+ │  │   Datos relacionales │    │   Datos vectoriales         │  │
+ │  │                     │    │                             │  │
+ │  │  productos          │    │  producto_embeddings        │  │
+ │  │  ├─ id              │◄──►│  ├─ producto_id             │  │
+ │  │  ├─ nombre          │    │  ├─ embedding vector(384)   │  │
+ │  │  ├─ precio          │    │  └─ (indice HNSW)          │  │
+ │  │  └─ categoria       │    │                             │  │
+ │  └─────────────────────┘    └─────────────────────────────┘  │
+ │                                                              │
+ │  Puedes hacer:                                               │
+ │  • JOINs entre tablas normales y vectoriales                 │
+ │  • WHERE con filtros + ORDER BY distancia vectorial          │
+ │  • GROUP BY, agregaciones sobre resultados de similitud      │
+ │  • Todo el SQL que ya conoces!                               │
+ └──────────────────────────────────────────────────────────────┘
+```
+
+<CommandTable
+  commands={[
+    { command: "vector(n)", description: "Tipo de dato para almacenar vectores de n dimensiones" },
+    { command: "Embeddings", description: "Vectores generados por modelos de IA que capturan significado" },
+    { command: "<=>", description: "Operador de distancia coseno (el mas usado para texto)" },
+    { command: "<->", description: "Operador de distancia euclidiana (L2)" },
+    { command: "<#>", description: "Operador de producto interno negativo" },
+    { command: "IVFFlat", description: "Indice por clusters, rapido de crear, buena precision" },
+    { command: "HNSW", description: "Indice jerarquico, mejor precision, mas uso de memoria" },
+    { command: "pgvector", description: "Extension de PostgreSQL para soporte vectorial" },
+  ]}
+/>
+
+---
+
+### Ejercicios
+
+**Ejercicio 1**: Crea una tabla `busqueda_clientes` con columnas: `id SERIAL`, `cliente_id` (FK a clientes), `bio TEXT`, y `bio_embedding vector(3)`. Inserta 4 registros con vectores inventados de 3 dimensiones.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+CREATE TABLE busqueda_clientes (
+  id SERIAL PRIMARY KEY,
+  cliente_id INTEGER REFERENCES clientes(id),
+  bio TEXT,
+  bio_embedding vector(3)
+);
+
+INSERT INTO busqueda_clientes (cliente_id, bio, bio_embedding)
+VALUES
+  (1, 'Amante de la tecnologia y gadgets', '[0.9, 0.2, 0.1]'),
+  (2, 'Aficionado al diseno de interiores', '[0.1, 0.8, 0.7]'),
+  (3, 'Gamer y desarrollador de software', '[0.8, 0.1, 0.3]'),
+  (4, 'Decoracion y muebles modernos', '[0.2, 0.9, 0.6]');
+```
+
+</details>
+
+**Ejercicio 2**: Usando la tabla del ejercicio anterior, encuentra los 2 clientes mas similares al cliente con `bio_embedding = '[0.85, 0.15, 0.2]'` (un perfil tecnologico). Usa distancia coseno y muestra el nombre del cliente (JOIN con la tabla `clientes`).
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+  c.nombre,
+  bc.bio,
+  bc.bio_embedding <=> '[0.85, 0.15, 0.2]' AS distancia
+FROM busqueda_clientes bc
+JOIN clientes c ON bc.cliente_id = c.id
+ORDER BY distancia
+LIMIT 2;
+```
+
+</details>
+
+**Ejercicio 3**: Crea un indice HNSW sobre la columna `bio_embedding` de `busqueda_clientes` usando operaciones de distancia coseno. Luego verifica que el indice existe consultando `pg_indexes`.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+CREATE INDEX idx_bio_hnsw
+ON busqueda_clientes
+USING hnsw (bio_embedding vector_cosine_ops);
+
+-- Verificar
+SELECT indexname, indexdef
+FROM pg_indexes
+WHERE tablename = 'busqueda_clientes';
+```
+
+</details>
+
+**Ejercicio 4**: Escribe una consulta que combine busqueda vectorial con filtros tradicionales: encuentra clientes similares a `'[0.9, 0.2, 0.1]'` que ademas vivan en Santiago (usando JOIN con la tabla `clientes`).
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+  c.nombre,
+  c.ciudad,
+  bc.bio,
+  bc.bio_embedding <=> '[0.9, 0.2, 0.1]' AS distancia
+FROM busqueda_clientes bc
+JOIN clientes c ON bc.cliente_id = c.id
+WHERE c.ciudad = 'Santiago'
+ORDER BY distancia
+LIMIT 3;
+```
+
+</details>
+
+**Ejercicio 5**: Limpia los objetos creados en los ejercicios. Elimina el indice, la tabla `busqueda_clientes`, y (si la creaste) la tabla `producto_embeddings`.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+-- Eliminar en orden (el indice se elimina con la tabla)
+DROP TABLE IF EXISTS busqueda_clientes;
+DROP TABLE IF EXISTS producto_embeddings;
+
+-- Si quieres remover la extension (opcional, no recomendado si la usas)
+-- DROP EXTENSION vector;
+```
+
+</details>

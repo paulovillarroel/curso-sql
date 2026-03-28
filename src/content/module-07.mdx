@@ -104,6 +104,42 @@ Desmenucemos la sintaxis:
   `INNER JOIN` y `JOIN` son lo mismo. La palabra `INNER` es opcional, pero es buena practica escribirla para ser explicito.
 </Callout>
 
+### Paso a paso: como PostgreSQL ejecuta un INNER JOIN
+
+Para que entiendas exactamente que ocurre, sigamos el proceso fila por fila:
+
+```
+Paso 1: PostgreSQL toma la PRIMERA fila de clientes
+  → Ana (id = 1)
+
+Paso 2: Busca en pedidos TODAS las filas donde cliente_id = 1
+  → Pedido 10 (cliente_id = 1, total = 500) ✓ MATCH
+  → Pedido 11 (cliente_id = 1, total = 300) ✓ MATCH
+  → Pedido 12 (cliente_id = 3, total = 150) ✗ No coincide
+
+Paso 3: Combina Ana con cada pedido que coincidio
+  → Fila resultado: Ana | 10 | 500
+  → Fila resultado: Ana | 11 | 300
+
+Paso 4: Toma la SIGUIENTE fila de clientes
+  → Bruno (id = 2)
+
+Paso 5: Busca en pedidos donde cliente_id = 2
+  → Pedido 10 (cliente_id = 1) ✗
+  → Pedido 11 (cliente_id = 1) ✗
+  → Pedido 12 (cliente_id = 3) ✗
+  → No hay coincidencias → Bruno NO aparece en el resultado
+
+Paso 6: Toma la SIGUIENTE fila de clientes
+  → Carla (id = 3)
+
+Paso 7: Busca en pedidos donde cliente_id = 3
+  → Pedido 12 (cliente_id = 3, total = 150) ✓ MATCH
+  → Fila resultado: Carla | 12 | 150
+```
+
+La regla es simple: **sin match, no hay fila**. Un INNER JOIN solo produce resultados cuando ambos lados tienen datos que coinciden.
+
 Puedes encadenar multiples JOINs. Aqui conectamos `detalle_pedidos` con `pedidos` y con `productos`:
 
 ```sql
@@ -178,6 +214,36 @@ LEFT JOIN pedidos p ON c.id = p.cliente_id;
  TODOS los clientes aparecen, tengan o no pedidos.
 ```
 
+### Paso a paso: como PostgreSQL ejecuta un LEFT JOIN
+
+La diferencia con INNER JOIN es sutil pero crucial:
+
+```
+Paso 1: PostgreSQL toma la PRIMERA fila de clientes
+  → Ana (id = 1)
+
+Paso 2: Busca en pedidos donde cliente_id = 1
+  → Pedido 10 ✓ MATCH  → Fila: Ana | 10 | 500
+  → Pedido 11 ✓ MATCH  → Fila: Ana | 11 | 300
+
+Paso 3: Toma la SIGUIENTE fila de clientes
+  → Bruno (id = 2)
+
+Paso 4: Busca en pedidos donde cliente_id = 2
+  → No hay coincidencias...
+  → Pero es LEFT JOIN, asi que Bruno NO se descarta.
+  → En vez de eliminarlo, PostgreSQL rellena con NULLs:
+  → Fila: Bruno | NULL | NULL              ← ¡Esta es la diferencia!
+
+Paso 5: Toma la SIGUIENTE fila de clientes
+  → Carla (id = 3)
+
+Paso 6: Busca en pedidos donde cliente_id = 3
+  → Pedido 12 ✓ MATCH  → Fila: Carla | 12 | 150
+```
+
+La diferencia clave: donde INNER JOIN **descarta** las filas sin match, LEFT JOIN las **conserva rellenando con NULLs**. Esto garantiza que nunca pierdas datos de la tabla izquierda.
+
 Ahora con nuestra base de datos:
 
 ```sql
@@ -229,9 +295,58 @@ ORDER BY total_vendido DESC;
 
 ---
 
-## RIGHT JOIN: El espejo del LEFT
+## RIGHT JOIN: Todo de la tabla derecha
 
-`RIGHT JOIN` es exactamente como `LEFT JOIN` pero al reves: mantiene todas las filas de la tabla **derecha**.
+`RIGHT JOIN` (o `RIGHT OUTER JOIN`) es el espejo del `LEFT JOIN`: mantiene todas las filas de la tabla **derecha**, incluso si no tienen coincidencia en la izquierda. Donde no hay coincidencia, las columnas de la izquierda seran `NULL`.
+
+Veamoslo con un ejemplo donde hay un pedido con un `cliente_id` que no existe:
+
+```
+ tabla clientes           tabla pedidos
+ ┌────┬──────────┐        ┌────┬────────────┬───────┐
+ │ id │ nombre   │        │ id │ cliente_id │ total │
+ ├────┼──────────┤        ├────┼────────────┼───────┤
+ │  1 │ Ana      │        │ 10 │     1      │  500  │
+ │  2 │ Bruno    │        │ 11 │     1      │  300  │
+ │  3 │ Carla    │        │ 12 │     3      │  150  │
+ └────┴──────────┘        │ 13 │     99     │  200  │ ← cliente_id 99 no existe
+                          └────┴────────────┴───────┘
+```
+
+```sql
+SELECT c.nombre, p.id AS pedido_id, p.total
+FROM clientes c
+RIGHT JOIN pedidos p ON c.id = p.cliente_id;
+```
+
+```
+ Resultado RIGHT JOIN
+ ┌──────────┬───────────┬───────┐
+ │ nombre   │ pedido_id │ total │
+ ├──────────┼───────────┼───────┤
+ │ Ana      │    10     │  500  │
+ │ Ana      │    11     │  300  │
+ │ Carla    │    12     │  150  │
+ │ NULL     │    13     │  200  │  ← pedido 13 aparece, pero sin cliente
+ └──────────┴───────────┴───────┘
+
+ TODOS los pedidos aparecen. El pedido 13 tiene un cliente_id
+ invalido, asi que nombre es NULL.
+ Bruno NO aparece (no tiene pedidos y no es la tabla "protegida").
+```
+
+Compara con LEFT JOIN para ver la diferencia:
+
+```
+ LEFT JOIN protege la tabla IZQUIERDA (clientes):
+   Ana ✓  Bruno ✓ (con NULLs)  Carla ✓  Pedido 13 ✗ (desaparece)
+
+ RIGHT JOIN protege la tabla DERECHA (pedidos):
+   Pedido 10 ✓  Pedido 11 ✓  Pedido 12 ✓  Pedido 13 ✓ (con NULLs)
+   Bruno ✗ (desaparece)
+```
+
+Un `RIGHT JOIN` siempre se puede reescribir como `LEFT JOIN` invirtiendo el orden de las tablas:
 
 ```sql
 -- Esto con RIGHT JOIN...
@@ -239,14 +354,14 @@ SELECT c.nombre, p.id, p.total
 FROM clientes c
 RIGHT JOIN pedidos p ON c.id = p.cliente_id;
 
--- ...es equivalente a esto con LEFT JOIN (invirtiendo las tablas)
+-- ...es IDENTICO a esto con LEFT JOIN (tablas invertidas)
 SELECT c.nombre, p.id, p.total
 FROM pedidos p
 LEFT JOIN clientes c ON c.id = p.cliente_id;
 ```
 
-<Callout type="info">
-  En la practica, casi nadie usa `RIGHT JOIN`. Simplemente inviertes el orden de las tablas y usas `LEFT JOIN`. Es mas facil de leer y mas consistente.
+<Callout type="tip">
+  En la practica, casi nadie usa `RIGHT JOIN`. Simplemente inviertes el orden de las tablas y usas `LEFT JOIN`. Es mas facil de leer y mas consistente. Si ves un RIGHT JOIN en codigo existente, ya sabes que es lo mismo que un LEFT JOIN al reves.
 </Callout>
 
 ---
@@ -302,6 +417,135 @@ FULL OUTER JOIN pedidos p ON c.id = p.cliente_id;
 En la practica, `FULL OUTER JOIN` se usa poco comparado con `INNER JOIN` o `LEFT JOIN`, pero es muy util para auditorias o para encontrar inconsistencias en los datos.
 
 ---
+
+## CROSS JOIN: Todas las combinaciones posibles
+
+`CROSS JOIN` genera el **producto cartesiano**: combina cada fila de la tabla izquierda con **todas** las filas de la tabla derecha. No usa clausula `ON` porque no necesita condicion de match — simplemente combina todo con todo.
+
+```
+ tabla colores            tabla tallas
+ ┌───────────┐            ┌──────────┐
+ │ color     │            │ talla    │
+ ├───────────┤            ├──────────┤
+ │ Rojo      │            │ S        │
+ │ Azul      │            │ M        │
+ └───────────┘            │ L        │
+                          └──────────┘
+```
+
+```sql
+SELECT color, talla
+FROM colores
+CROSS JOIN tallas;
+```
+
+```
+ Resultado CROSS JOIN (2 × 3 = 6 filas)
+ ┌───────────┬──────────┐
+ │ color     │ talla    │
+ ├───────────┼──────────┤
+ │ Rojo      │ S        │
+ │ Rojo      │ M        │
+ │ Rojo      │ L        │
+ │ Azul      │ S        │
+ │ Azul      │ M        │
+ │ Azul      │ L        │
+ └───────────┴──────────┘
+
+ Cada color se combina con CADA talla. Sin excepciones.
+```
+
+<Callout type="warning" title="Cuidado con el tamaño">
+  Si la tabla A tiene 1,000 filas y la tabla B tiene 1,000 filas, un CROSS JOIN genera **1,000,000 de filas**. Usalo solo con tablas pequenas o con un proposito claro.
+</Callout>
+
+### Ejemplo practico con nuestra BD
+
+Un uso comun es generar combinaciones para reportes. Por ejemplo, queremos asegurar que todas las categorias aparezcan para cada ciudad, incluso si no hubo ventas:
+
+```sql
+-- Generar todas las combinaciones categoria × ciudad
+SELECT DISTINCT pr.categoria, c.ciudad
+FROM productos pr
+CROSS JOIN clientes c
+ORDER BY pr.categoria, c.ciudad;
+```
+
+Otro ejemplo practico: comparar cada producto contra el promedio de su categoria:
+
+```sql
+-- Promedio por categoria usando CROSS JOIN con una subconsulta
+SELECT
+  p.nombre,
+  p.precio,
+  p.categoria,
+  avg_cat.promedio,
+  ROUND(p.precio - avg_cat.promedio, 2) AS diferencia
+FROM productos p
+INNER JOIN (
+  SELECT categoria, ROUND(AVG(precio), 2) AS promedio
+  FROM productos
+  GROUP BY categoria
+) avg_cat ON p.categoria = avg_cat.categoria
+ORDER BY p.categoria, diferencia DESC;
+```
+
+<Callout type="info" title="Sintaxis alternativa">
+  `CROSS JOIN` tambien se puede escribir con coma en el `FROM`: `FROM tabla_a, tabla_b`. Son equivalentes, pero `CROSS JOIN` es mas explicito y claro sobre tu intencion.
+</Callout>
+
+---
+
+## Resumen visual: todos los JOINs de un vistazo
+
+Imagina dos tablas como circulos. La zona de interseccion son las filas que coinciden. Cada JOIN "ilumina" una parte distinta:
+
+<div class="grid grid-cols-2 gap-6 my-8 max-w-xl mx-auto">
+  <div class="text-center">
+    <p class="font-bold text-slate-700 dark:text-slate-200 mb-2">INNER JOIN</p>
+    <svg viewBox="0 0 200 120" class="w-full max-w-[200px] mx-auto">
+      <defs>
+        <clipPath id="inner-clip">
+          <circle cx="75" cy="60" r="45" />
+        </clipPath>
+      </defs>
+      <circle cx="75" cy="60" r="45" fill="none" stroke="#6b7280" stroke-width="2" />
+      <circle cx="125" cy="60" r="45" fill="none" stroke="#6b7280" stroke-width="2" />
+      <circle cx="125" cy="60" r="45" fill="#4ade80" opacity="0.8" clip-path="url(#inner-clip)" />
+      <text x="60" y="64" text-anchor="middle" class="text-[11px]" fill="#374151">table1</text>
+      <text x="140" y="64" text-anchor="middle" class="text-[11px]" fill="#374151">table2</text>
+    </svg>
+  </div>
+  <div class="text-center">
+    <p class="font-bold text-slate-700 dark:text-slate-200 mb-2">LEFT JOIN</p>
+    <svg viewBox="0 0 200 120" class="w-full max-w-[200px] mx-auto">
+      <circle cx="125" cy="60" r="45" fill="none" stroke="#6b7280" stroke-width="2" />
+      <circle cx="75" cy="60" r="45" fill="#4ade80" opacity="0.8" stroke="#6b7280" stroke-width="2" />
+      <circle cx="125" cy="60" r="45" fill="none" stroke="#6b7280" stroke-width="2" />
+      <text x="60" y="64" text-anchor="middle" class="text-[11px]" fill="#1a1a1a">table1</text>
+      <text x="140" y="64" text-anchor="middle" class="text-[11px]" fill="#374151">table2</text>
+    </svg>
+  </div>
+  <div class="text-center">
+    <p class="font-bold text-slate-700 dark:text-slate-200 mb-2">RIGHT JOIN</p>
+    <svg viewBox="0 0 200 120" class="w-full max-w-[200px] mx-auto">
+      <circle cx="75" cy="60" r="45" fill="none" stroke="#6b7280" stroke-width="2" />
+      <circle cx="125" cy="60" r="45" fill="#4ade80" opacity="0.8" stroke="#6b7280" stroke-width="2" />
+      <circle cx="75" cy="60" r="45" fill="none" stroke="#6b7280" stroke-width="2" />
+      <text x="60" y="64" text-anchor="middle" class="text-[11px]" fill="#374151">table1</text>
+      <text x="140" y="64" text-anchor="middle" class="text-[11px]" fill="#1a1a1a">table2</text>
+    </svg>
+  </div>
+  <div class="text-center">
+    <p class="font-bold text-slate-700 dark:text-slate-200 mb-2">FULL OUTER JOIN</p>
+    <svg viewBox="0 0 200 120" class="w-full max-w-[200px] mx-auto">
+      <circle cx="75" cy="60" r="45" fill="#4ade80" opacity="0.8" stroke="#6b7280" stroke-width="2" />
+      <circle cx="125" cy="60" r="45" fill="#4ade80" opacity="0.8" stroke="#6b7280" stroke-width="2" />
+      <text x="60" y="64" text-anchor="middle" class="text-[11px]" fill="#1a1a1a">table1</text>
+      <text x="140" y="64" text-anchor="middle" class="text-[11px]" fill="#1a1a1a">table2</text>
+    </svg>
+  </div>
+</div>
 
 ## Cuando usar cada JOIN
 

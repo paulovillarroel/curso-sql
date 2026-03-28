@@ -70,6 +70,58 @@ FROM productos
 WHERE nombre LIKE '%Premium%';
 ```
 
+### STRING_AGG: concatenar valores de multiples filas
+
+`STRING_AGG` combina valores de **varias filas** en un solo texto, separados por un delimitador. Es el equivalente de `GROUP_CONCAT` en MySQL.
+
+```sql
+-- Ciudades de todos los clientes en una sola linea
+SELECT STRING_AGG(DISTINCT ciudad, ', ') AS ciudades
+FROM clientes;
+-- Resultado: 'Antofagasta, Concepcion, Santiago, Temuco, Valparaiso'
+```
+
+Combinado con `GROUP BY`, es muy util para crear listas por grupo:
+
+```sql
+-- Productos que compro cada cliente (una linea por cliente)
+SELECT
+  c.nombre,
+  STRING_AGG(DISTINCT pr.nombre, ', ' ORDER BY pr.nombre) AS productos_comprados
+FROM clientes c
+INNER JOIN pedidos p ON c.id = p.cliente_id
+INNER JOIN detalle_pedidos dp ON p.id = dp.pedido_id
+INNER JOIN productos pr ON dp.producto_id = pr.id
+GROUP BY c.id, c.nombre;
+```
+
+```sql
+-- Empleados por departamento
+SELECT
+  departamento,
+  STRING_AGG(nombre, ', ' ORDER BY nombre) AS empleados
+FROM empleados
+GROUP BY departamento;
+-- Ejemplo: 'Ventas' | 'Ana Torres, Carlos Diaz, Maria Lopez'
+```
+
+<Callout type="tip" title="ORDER BY dentro de STRING_AGG">
+  Puedes usar `ORDER BY` dentro de `STRING_AGG` para controlar el orden de los valores concatenados. Tambien puedes usar `DISTINCT` para eliminar duplicados.
+</Callout>
+
+```sql
+-- Categorias de productos que ha comprado cada cliente, sin repetir
+SELECT
+  c.nombre,
+  STRING_AGG(DISTINCT pr.categoria, ' | ' ORDER BY pr.categoria) AS categorias
+FROM clientes c
+INNER JOIN pedidos p ON c.id = p.cliente_id
+INNER JOIN detalle_pedidos dp ON p.id = dp.pedido_id
+INNER JOIN productos pr ON dp.producto_id = pr.id
+GROUP BY c.id, c.nombre;
+-- Ejemplo: 'Ana Torres' | 'Accesorios | Electronica | Muebles'
+```
+
 ---
 
 ### Funciones de fecha y hora

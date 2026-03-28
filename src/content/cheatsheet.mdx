@@ -125,6 +125,22 @@ GROUP BY categoria;
 
 ---
 
+### STRING_AGG (concatenar filas)
+
+```sql
+-- Combinar valores de multiples filas en un texto
+SELECT STRING_AGG(nombre, ', ' ORDER BY nombre) FROM empleados;
+
+-- Agrupar por departamento
+SELECT departamento, STRING_AGG(nombre, ', ') AS empleados
+FROM empleados GROUP BY departamento;
+
+-- Con DISTINCT para valores unicos
+SELECT STRING_AGG(DISTINCT ciudad, ' | ' ORDER BY ciudad) FROM clientes;
+```
+
+---
+
 ### Funciones de string
 
 <CommandTable commands={[
@@ -610,6 +626,97 @@ WHERE tablename = 'mi_tabla';
 - NO en tablas con pocas filas
 - NO en columnas que se actualizan constantemente
 </Callout>
+
+---
+
+### Transacciones
+
+```sql
+-- Iniciar transaccion
+BEGIN;
+
+-- Confirmar cambios (hacerlos permanentes)
+COMMIT;
+
+-- Revertir cambios (deshacerlos todos)
+ROLLBACK;
+
+-- Punto de guardado parcial
+SAVEPOINT nombre;
+ROLLBACK TO SAVEPOINT nombre;
+RELEASE SAVEPOINT nombre;
+
+-- Nivel de aislamiento
+BEGIN;
+SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+```
+
+---
+
+### Vistas
+
+```sql
+-- Crear vista
+CREATE VIEW nombre AS SELECT ...;
+
+-- Crear o reemplazar
+CREATE OR REPLACE VIEW nombre AS SELECT ...;
+
+-- Eliminar vista
+DROP VIEW IF EXISTS nombre;
+
+-- Vista materializada (guarda datos en disco)
+CREATE MATERIALIZED VIEW nombre AS SELECT ...;
+
+-- Refrescar datos de vista materializada
+REFRESH MATERIALIZED VIEW nombre;
+
+-- Refrescar sin bloquear lecturas (requiere indice UNIQUE)
+REFRESH MATERIALIZED VIEW CONCURRENTLY nombre;
+
+-- Ver definicion de una vista
+SELECT pg_get_viewdef('nombre_vista', true);
+
+-- Listar vistas
+\dv      -- en psql
+\dm      -- vistas materializadas en psql
+```
+
+---
+
+### pgvector (bases de datos vectoriales)
+
+```sql
+-- Activar extension
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- Crear tabla con columna vectorial
+CREATE TABLE items (
+  id SERIAL PRIMARY KEY,
+  embedding vector(384)   -- 384 dimensiones
+);
+
+-- Insertar vectores
+INSERT INTO items (embedding) VALUES ('[0.1, 0.2, 0.3]');
+
+-- Busqueda por similitud (distancia coseno, la mas usada)
+SELECT * FROM items ORDER BY embedding <=> '[0.1, 0.2, 0.3]' LIMIT 5;
+
+-- Distancia euclidiana (L2)
+SELECT * FROM items ORDER BY embedding <-> '[0.1, 0.2, 0.3]' LIMIT 5;
+
+-- Producto interno negativo
+SELECT * FROM items ORDER BY embedding <#> '[0.1, 0.2, 0.3]' LIMIT 5;
+
+-- Indice HNSW (mejor precision)
+CREATE INDEX idx_hnsw ON items
+USING hnsw (embedding vector_cosine_ops);
+
+-- Indice IVFFlat (menos memoria)
+CREATE INDEX idx_ivf ON items
+USING ivfflat (embedding vector_cosine_ops)
+WITH (lists = 100);
+```
 
 ---
 

@@ -1,0 +1,500 @@
+import Callout from "../components/Callout.astro"
+import CommandTable from "../components/CommandTable.astro"
+
+Cuando tienes una consulta compleja que usas una y otra vez — un reporte de ventas, un listado de clientes VIP, un resumen de inventario — copiar y pegar ese SQL en cada lugar es tedioso y propenso a errores. Las **vistas** te permiten guardar esa consulta con un nombre y usarla como si fuera una tabla.
+
+---
+
+## Que es una vista?
+
+Una vista es una **consulta SQL guardada con un nombre**. No almacena datos; cada vez que la consultas, PostgreSQL ejecuta la consulta original y te devuelve el resultado actualizado.
+
+```
+ Sin vista:                              Con vista:
+ ┌──────────────────────────────┐        ┌──────────────────────┐
+ │ SELECT c.nombre, SUM(p.total)│        │ SELECT * FROM        │
+ │ FROM clientes c              │   →    │   resumen_clientes;  │
+ │ JOIN pedidos p ON ...        │        │                      │
+ │ GROUP BY c.nombre;           │        │ (mismo resultado)    │
+ └──────────────────────────────┘        └──────────────────────┘
+   (repetir en cada reporte)               (escribir una vez)
+```
+
+---
+
+## CREATE VIEW
+
+```sql
+CREATE VIEW nombre_vista AS
+  SELECT ...;
+```
+
+Creemos algunas vistas utiles con nuestra base de datos:
+
+### Vista: resumen de clientes
+
+```sql
+CREATE VIEW resumen_clientes AS
+SELECT
+  c.id,
+  c.nombre,
+  c.ciudad,
+  COUNT(p.id) AS total_pedidos,
+  COALESCE(SUM(p.total), 0) AS gasto_total,
+  MAX(p.fecha) AS ultimo_pedido
+FROM clientes c
+LEFT JOIN pedidos p ON c.id = p.cliente_id
+GROUP BY c.id, c.nombre, c.ciudad;
+```
+
+Ahora puedes usarla como si fuera una tabla:
+
+```sql
+-- Todos los clientes con su resumen
+SELECT * FROM resumen_clientes ORDER BY gasto_total DESC;
+
+-- Filtrar clientes VIP
+SELECT nombre, ciudad, gasto_total
+FROM resumen_clientes
+WHERE gasto_total > 1000;
+
+-- Clientes que nunca compraron
+SELECT nombre, ciudad
+FROM resumen_clientes
+WHERE total_pedidos = 0;
+```
+
+### Vista: inventario con estado
+
+```sql
+CREATE VIEW inventario_estado AS
+SELECT
+  p.id,
+  p.nombre,
+  p.categoria,
+  p.precio,
+  p.stock,
+  COALESCE(SUM(dp.cantidad), 0) AS unidades_vendidas,
+  CASE
+    WHEN p.stock = 0 THEN 'Agotado'
+    WHEN p.stock < 10 THEN 'Stock bajo'
+    ELSE 'Disponible'
+  END AS estado_stock
+FROM productos p
+LEFT JOIN detalle_pedidos dp ON p.id = dp.producto_id
+GROUP BY p.id, p.nombre, p.categoria, p.precio, p.stock;
+```
+
+```sql
+-- Productos con stock bajo
+SELECT nombre, categoria, stock, estado_stock
+FROM inventario_estado
+WHERE estado_stock = 'Stock bajo'
+ORDER BY stock ASC;
+
+-- Categoria con mas ventas
+SELECT categoria, SUM(unidades_vendidas) AS total_vendido
+FROM inventario_estado
+GROUP BY categoria
+ORDER BY total_vendido DESC;
+```
+
+### Vista: detalle completo de pedidos
+
+```sql
+CREATE VIEW detalle_pedidos_completo AS
+SELECT
+  p.id AS pedido_id,
+  p.fecha,
+  p.estado,
+  c.nombre AS cliente,
+  c.ciudad,
+  pr.nombre AS producto,
+  pr.categoria,
+  dp.cantidad,
+  dp.precio_unitario,
+  (dp.cantidad * dp.precio_unitario) AS subtotal
+FROM pedidos p
+INNER JOIN clientes c ON p.cliente_id = c.id
+INNER JOIN detalle_pedidos dp ON p.id = dp.pedido_id
+INNER JOIN productos pr ON dp.producto_id = pr.id;
+```
+
+```sql
+-- Ahora consultas de 4 tablas se vuelven simples:
+SELECT cliente, producto, cantidad, subtotal
+FROM detalle_pedidos_completo
+WHERE estado = 'completado'
+ORDER BY fecha DESC;
+
+-- Ventas por categoria
+SELECT categoria, SUM(subtotal) AS total_ventas
+FROM detalle_pedidos_completo
+WHERE estado = 'completado'
+GROUP BY categoria
+ORDER BY total_ventas DESC;
+```
+
+<Callout type="tip" title="Las vistas simplifican, no duplican">
+  Una vista no copia los datos. Es solo un "atajo" a una consulta. Cuando insertas un nuevo pedido en la tabla `pedidos`, la vista `detalle_pedidos_completo` lo incluye automaticamente la proxima vez que la consultes.
+</Callout>
+
+---
+
+## Paso a paso: que ocurre cuando consultas una vista
+
+```
+Tu escribes:  SELECT * FROM resumen_clientes WHERE ciudad = 'Santiago';
+
+PostgreSQL hace:
+  1. Busca la definicion de resumen_clientes
+  2. Reemplaza la vista por su consulta original:
+     SELECT * FROM (
+       SELECT c.id, c.nombre, c.ciudad,
+         COUNT(p.id) AS total_pedidos, ...
+       FROM clientes c LEFT JOIN pedidos p ON ...
+       GROUP BY c.id, c.nombre, c.ciudad
+     ) AS resumen_clientes
+     WHERE ciudad = 'Santiago';
+  3. Optimiza y ejecuta la consulta combinada
+  4. Te devuelve el resultado
+```
+
+PostgreSQL es inteligente: no ejecuta la consulta completa y luego filtra. Combina tu `WHERE` con la consulta de la vista y optimiza todo junto. En el ejemplo, filtra por `ciudad = 'Santiago'` **antes** de agrupar, lo que es mas eficiente.
+
+---
+
+## Modificar y eliminar vistas
+
+### CREATE OR REPLACE VIEW
+
+Si necesitas cambiar la definicion de una vista:
+
+```sql
+-- Modificar la vista (agrega email)
+CREATE OR REPLACE VIEW resumen_clientes AS
+SELECT
+  c.id,
+  c.nombre,
+  c.email,             -- nueva columna
+  c.ciudad,
+  COUNT(p.id) AS total_pedidos,
+  COALESCE(SUM(p.total), 0) AS gasto_total,
+  MAX(p.fecha) AS ultimo_pedido
+FROM clientes c
+LEFT JOIN pedidos p ON c.id = p.cliente_id
+GROUP BY c.id, c.nombre, c.email, c.ciudad;
+```
+
+<Callout type="warning" title="Limitaciones de CREATE OR REPLACE">
+  `CREATE OR REPLACE VIEW` solo permite **agregar columnas** al final. No puedes eliminar columnas existentes ni cambiar su tipo. Si necesitas hacer eso, debes hacer `DROP VIEW` primero y luego `CREATE VIEW`.
+</Callout>
+
+### DROP VIEW
+
+```sql
+-- Eliminar vista
+DROP VIEW resumen_clientes;
+
+-- Eliminar solo si existe (sin error)
+DROP VIEW IF EXISTS resumen_clientes;
+
+-- Si otras vistas dependen de esta, CASCADE las elimina tambien
+DROP VIEW resumen_clientes CASCADE;
+```
+
+---
+
+## Vistas actualizables
+
+En ciertos casos, puedes hacer `INSERT`, `UPDATE` y `DELETE` directamente sobre una vista, y los cambios se aplican a la tabla subyacente:
+
+```sql
+-- Vista simple sobre una sola tabla
+CREATE VIEW productos_electronica AS
+SELECT id, nombre, precio, stock
+FROM productos
+WHERE categoria = 'Electronica';
+
+-- Esto funciona! Actualiza la tabla productos
+UPDATE productos_electronica SET precio = 599.99 WHERE id = 1;
+
+-- Insertar a traves de la vista
+INSERT INTO productos_electronica (nombre, precio, stock)
+VALUES ('Auriculares Pro', 89.99, 75);
+-- Nota: la columna categoria no se establece automaticamente
+```
+
+Las condiciones para que una vista sea actualizable:
+
+<CommandTable
+  commands={[
+    { command: "Una sola tabla", description: "El FROM debe referenciar exactamente una tabla (sin JOINs)." },
+    { command: "Sin agregaciones", description: "No puede usar GROUP BY, HAVING, DISTINCT ni funciones de agregacion." },
+    { command: "Sin subconsultas en SELECT", description: "Las columnas deben venir directamente de la tabla." },
+    { command: "Sin LIMIT/OFFSET", description: "No debe limitar las filas." },
+  ]}
+/>
+
+<Callout type="info" title="WITH CHECK OPTION">
+  Puedes agregar `WITH CHECK OPTION` al crear la vista para que PostgreSQL rechace inserciones o actualizaciones que no cumplan el filtro de la vista:
+
+  ```sql
+  CREATE VIEW productos_electronica AS
+  SELECT id, nombre, precio, stock
+  FROM productos
+  WHERE categoria = 'Electronica'
+  WITH CHECK OPTION;
+
+  -- Esto falla porque categoria seria NULL, no 'Electronica':
+  INSERT INTO productos_electronica (nombre, precio, stock)
+  VALUES ('Silla Gamer', 299.99, 20);
+  -- ERROR: new row violates check option for view
+  ```
+</Callout>
+
+---
+
+## Vistas materializadas
+
+Una vista normal ejecuta la consulta **cada vez** que la consultas. Si la consulta es lenta (por ejemplo, resume millones de filas), esto puede ser un problema. Las **vistas materializadas** guardan el resultado en disco, como una tabla "cache":
+
+```
+ Vista normal:                      Vista materializada:
+ ┌──────────────┐                   ┌──────────────────┐
+ │ Consulta →   │  Cada vez que     │ Consulta →       │  Una vez
+ │  ejecuta la  │  la usas          │  guarda datos    │  (al crear
+ │  query       │                   │  en disco        │   o refrescar)
+ │  original    │                   │                  │
+ └──────────────┘                   └──────────────────┘
+  Siempre actualizada                Rapida pero puede
+  Puede ser lenta                    estar desactualizada
+```
+
+### Crear y refrescar
+
+```sql
+-- Crear vista materializada
+CREATE MATERIALIZED VIEW mv_ventas_por_categoria AS
+SELECT
+  pr.categoria,
+  COUNT(DISTINCT p.id) AS total_pedidos,
+  SUM(dp.cantidad) AS unidades_vendidas,
+  ROUND(SUM(dp.cantidad * dp.precio_unitario), 2) AS ingresos
+FROM pedidos p
+INNER JOIN detalle_pedidos dp ON p.id = dp.pedido_id
+INNER JOIN productos pr ON dp.producto_id = pr.id
+WHERE p.estado = 'completado'
+GROUP BY pr.categoria;
+```
+
+```sql
+-- Consultar (lee de disco, muy rapido)
+SELECT * FROM mv_ventas_por_categoria ORDER BY ingresos DESC;
+```
+
+Los datos **no se actualizan automaticamente**. Debes refrescar manualmente:
+
+```sql
+-- Refrescar (recalcula toda la vista)
+REFRESH MATERIALIZED VIEW mv_ventas_por_categoria;
+
+-- Refrescar sin bloquear lecturas (requiere un indice UNIQUE)
+REFRESH MATERIALIZED VIEW CONCURRENTLY mv_ventas_por_categoria;
+```
+
+<Callout type="info" title="Cuando refrescar?">
+  Depende de tu caso de uso. Algunas opciones:
+  - **Manualmente** despues de cargar datos nuevos
+  - **Con un cron job** cada hora/dia
+  - **Con un trigger** que refresque al insertar en la tabla base (cuidado: puede ser lento si se ejecuta con cada INSERT)
+</Callout>
+
+### Indices en vistas materializadas
+
+Como las vistas materializadas guardan datos en disco, **puedes crear indices** sobre ellas:
+
+```sql
+-- Indice unico (necesario para REFRESH CONCURRENTLY)
+CREATE UNIQUE INDEX idx_mv_ventas_cat ON mv_ventas_por_categoria(categoria);
+
+-- Ahora puedes hacer REFRESH sin bloquear lecturas
+REFRESH MATERIALIZED VIEW CONCURRENTLY mv_ventas_por_categoria;
+```
+
+### Eliminar
+
+```sql
+DROP MATERIALIZED VIEW mv_ventas_por_categoria;
+DROP MATERIALIZED VIEW IF EXISTS mv_ventas_por_categoria;
+```
+
+---
+
+## Cuando usar cada opcion
+
+<CommandTable
+  commands={[
+    { command: "Vista (VIEW)", description: "Consultas frecuentes que quieres simplificar. Siempre datos actualizados. Sin costo de almacenamiento extra." },
+    { command: "Vista materializada", description: "Consultas lentas cuyos datos no necesitan estar al segundo. Reportes, dashboards, agregaciones pesadas." },
+    { command: "CTE (WITH ...)", description: "Consulta temporal que solo necesitas dentro de una query. No se guarda, no se reutiliza." },
+    { command: "Subconsulta", description: "Similar al CTE pero inline. Util para casos simples donde un CTE seria excesivo." },
+  ]}
+/>
+
+<Callout type="tip" title="Regla practica">
+  Si copias y pegas la misma consulta en mas de 2 lugares → crea una **vista**. Si esa vista es lenta y no necesitas datos en tiempo real → convierte a **vista materializada**.
+</Callout>
+
+---
+
+## Ver vistas existentes
+
+```sql
+-- Listar todas las vistas
+SELECT table_name, table_type
+FROM information_schema.tables
+WHERE table_schema = 'public'
+  AND table_type = 'VIEW'
+ORDER BY table_name;
+
+-- Ver la definicion de una vista
+SELECT pg_get_viewdef('resumen_clientes', true);
+
+-- Listar vistas materializadas
+SELECT matviewname, definition
+FROM pg_matviews
+WHERE schemaname = 'public';
+
+-- Comando rapido en psql
+\dv      -- listar vistas
+\dm      -- listar vistas materializadas
+```
+
+---
+
+## Ejercicios
+
+**Ejercicio 1:** Crea una vista llamada `empleados_con_jefe` que muestre el nombre del empleado, su departamento, su salario y el nombre de su jefe. Para empleados sin jefe, debe mostrar 'Sin jefe'.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+CREATE VIEW empleados_con_jefe AS
+SELECT
+  e.id,
+  e.nombre AS empleado,
+  e.departamento,
+  e.salario,
+  COALESCE(j.nombre, 'Sin jefe') AS jefe
+FROM empleados e
+LEFT JOIN empleados j ON e.jefe_id = j.id;
+
+-- Uso:
+SELECT * FROM empleados_con_jefe ORDER BY departamento, salario DESC;
+```
+
+</details>
+
+**Ejercicio 2:** Crea una vista llamada `ventas_mensuales` que muestre: mes (en formato YYYY-MM), total de pedidos, ingresos totales y ticket promedio. Solo incluye pedidos completados.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+CREATE VIEW ventas_mensuales AS
+SELECT
+  TO_CHAR(fecha, 'YYYY-MM') AS mes,
+  COUNT(*) AS total_pedidos,
+  SUM(total) AS ingresos,
+  ROUND(AVG(total), 2) AS ticket_promedio
+FROM pedidos
+WHERE estado = 'completado'
+GROUP BY TO_CHAR(fecha, 'YYYY-MM');
+
+-- Uso:
+SELECT * FROM ventas_mensuales ORDER BY mes DESC;
+```
+
+</details>
+
+**Ejercicio 3:** Crea una vista materializada llamada `mv_top_productos` que muestre los 10 productos mas vendidos con: nombre, categoria, total de unidades vendidas e ingresos generados. Agrega un indice unico.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+CREATE MATERIALIZED VIEW mv_top_productos AS
+SELECT
+  pr.id,
+  pr.nombre,
+  pr.categoria,
+  SUM(dp.cantidad) AS unidades_vendidas,
+  ROUND(SUM(dp.cantidad * dp.precio_unitario), 2) AS ingresos
+FROM productos pr
+INNER JOIN detalle_pedidos dp ON pr.id = dp.producto_id
+INNER JOIN pedidos p ON dp.pedido_id = p.id
+WHERE p.estado = 'completado'
+GROUP BY pr.id, pr.nombre, pr.categoria
+ORDER BY unidades_vendidas DESC
+LIMIT 10;
+
+-- Indice unico
+CREATE UNIQUE INDEX idx_mv_top_prod ON mv_top_productos(id);
+
+-- Uso:
+SELECT * FROM mv_top_productos;
+
+-- Refrescar cuando cambien los datos
+REFRESH MATERIALIZED VIEW CONCURRENTLY mv_top_productos;
+```
+
+</details>
+
+**Ejercicio 4:** Usando la vista `detalle_pedidos_completo` (creada arriba en el modulo), escribe una consulta que muestre las ventas totales por ciudad y categoria. Ordena por ciudad y de mayor a menor venta.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+  ciudad,
+  categoria,
+  SUM(subtotal) AS total_ventas,
+  COUNT(*) AS lineas_vendidas
+FROM detalle_pedidos_completo
+WHERE estado = 'completado'
+GROUP BY ciudad, categoria
+ORDER BY ciudad, total_ventas DESC;
+```
+
+Nota como la vista simplifica esta consulta: sin la vista, necesitarias 4 JOINs. Con la vista, es un simple `SELECT ... GROUP BY` sobre una sola "tabla".
+
+</details>
+
+**Ejercicio 5:** Crea una vista actualizable llamada `productos_accesorios` que muestre id, nombre, precio y stock de los productos de la categoria 'Accesorios'. Agrega `WITH CHECK OPTION`. Luego intenta: (a) actualizar el precio de un producto, (b) insertar un producto con categoria 'Electronica' y explica por que falla.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+CREATE VIEW productos_accesorios AS
+SELECT id, nombre, precio, stock
+FROM productos
+WHERE categoria = 'Accesorios'
+WITH CHECK OPTION;
+
+-- (a) Esto funciona: actualiza en la tabla productos
+UPDATE productos_accesorios SET precio = precio * 0.9 WHERE stock > 50;
+
+-- (b) Esto falla:
+INSERT INTO productos_accesorios (nombre, precio, stock)
+VALUES ('Cable HDMI', 15.99, 200);
+-- ERROR: new row violates check option for view "productos_accesorios"
+-- Porque la vista filtra por categoria = 'Accesorios', pero el INSERT
+-- no especifica la categoria (queda NULL), que no cumple el filtro.
+-- WITH CHECK OPTION impide insertar filas que no serian visibles en la vista.
+```
+
+</details>

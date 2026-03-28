@@ -13,8 +13,8 @@ Dos cosas:
 
 Vamos a instalar ambos paso a paso.
 
-<Callout type="info" title="Alternativa sin instalar nada">
-  Si prefieres no instalar software, puedes usar [Neon](https://neon.tech) que ofrece PostgreSQL en la nube con un plan gratuito. Salta a la seccion "Alternativa cloud" mas abajo.
+<Callout type="info" title="Quieres probar antes de instalar?">
+  Existen playgrounds online donde puedes ejecutar SQL directamente en el navegador sin instalar nada. Mira la seccion "Playgrounds online" mas abajo. Son utiles como primer acercamiento, pero para seguir todo el curso necesitaras un entorno local.
 </Callout>
 
 ---
@@ -255,19 +255,23 @@ Si todos los numeros coinciden, estas listo para empezar.
 
 ---
 
-## Alternativa cloud: Neon (sin instalar nada)
+## Playgrounds online: practica sin instalar nada
 
-Si prefieres no instalar software en tu maquina, puedes usar [Neon](https://neon.tech) que ofrece PostgreSQL serverless con un plan gratuito:
+Si quieres un primer acercamiento a SQL antes de instalar software, existen **playgrounds online** donde puedes escribir y ejecutar consultas directamente en el navegador:
 
-1. Crea una cuenta en [neon.tech](https://neon.tech)
-2. Crea un nuevo proyecto (te genera una base de datos PostgreSQL automaticamente)
-3. En el dashboard, ve al **SQL Editor**
-4. Copia y ejecuta el mismo SQL de arriba (CREATE TABLE + INSERT) en el editor
+- **[aprendesql.dev/playground](https://www.aprendesql.dev/playground)** — Playground en espanol con soporte para PostgreSQL. Ideal para empezar a experimentar.
+- **[sqlfiddle.com](https://sqlfiddle.com/)** — Uno de los playgrounds mas conocidos. Soporta PostgreSQL y otros motores.
+- **[db-fiddle.com](https://www.db-fiddle.com/)** — Similar a SQL Fiddle, con interfaz limpia y soporte para PostgreSQL.
 
-Neon incluye un editor SQL integrado en el navegador, asi que no necesitas instalar ningun cliente adicional.
+Puedes copiar el SQL de creacion de tablas e insercion de datos de la seccion anterior, pegarlo en cualquiera de estos playgrounds y empezar a practicar de inmediato.
 
-<Callout type="info">
-  No importa cual opcion elijas. Lo que importa es que puedas ejecutar consultas SQL. Todo lo que veremos en este curso funciona igual en ambas opciones.
+<Callout type="warning" title="Limitaciones de los playgrounds">
+  Los playgrounds son excelentes para practicar consultas basicas (SELECT, WHERE, JOINs, agregaciones), pero tienen limitaciones:
+  - No soportan todas las funcionalidades de PostgreSQL (transacciones, vistas materializadas, permisos, etc.)
+  - Las sesiones son temporales: los datos no se guardan entre visitas
+  - No puedes usar herramientas como `EXPLAIN ANALYZE` o gestionar indices realmente
+
+  Para efectos profesionales y para cubrir todo el contenido del curso (especialmente los modulos avanzados), es necesario instalar PostgreSQL en tu maquina.
 </Callout>
 
 ---

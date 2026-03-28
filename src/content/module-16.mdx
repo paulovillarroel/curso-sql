@@ -1,0 +1,600 @@
+import Callout from "../components/Callout.astro"
+import CommandTable from "../components/CommandTable.astro"
+
+Cuando ejecutas un `INSERT`, `UPDATE` o `DELETE`, PostgreSQL lo aplica inmediatamente. Pero que pasa si necesitas hacer **varias operaciones que dependen entre si**? Si la primera funciona pero la segunda falla, tus datos quedan en un estado inconsistente. Las **transacciones** resuelven exactamente este problema.
+
+---
+
+## Que es una transaccion?
+
+Una transaccion es un **grupo de operaciones SQL que se ejecutan como una unidad**. O se aplican **todas** o no se aplica **ninguna**. No hay estados intermedios.
+
+Piensa en un pedido de nuestra tienda. Procesar un pedido requiere varias operaciones:
+
+```
+1. Insertar el pedido en la tabla pedidos
+2. Insertar cada producto en detalle_pedidos
+3. Actualizar el stock de cada producto
+
+Si el paso 3 falla (por ejemplo, no hay suficiente stock),
+NO queremos que los pasos 1 y 2 se queden en la base de datos.
+Necesitamos deshacer todo.
+```
+
+Sin transacciones, si falla el paso 3, te quedarias con un pedido registrado pero sin el stock actualizado. Con transacciones, si algo falla, **todo se revierte automaticamente**.
+
+---
+
+## BEGIN, COMMIT y ROLLBACK
+
+Estas son las tres sentencias fundamentales:
+
+<CommandTable
+  commands={[
+    { command: "BEGIN", description: "Inicia una transaccion. Todo lo que ejecutes despues queda 'en espera' hasta que confirmes o reviertas." },
+    { command: "COMMIT", description: "Confirma la transaccion. Todos los cambios se aplican de forma permanente a la base de datos." },
+    { command: "ROLLBACK", description: "Revierte la transaccion. Todos los cambios desde el BEGIN se deshacen como si nunca hubieran ocurrido." },
+  ]}
+/>
+
+### Ejemplo basico
+
+```sql
+-- Iniciar la transaccion
+BEGIN;
+
+-- Insertar un nuevo pedido
+INSERT INTO pedidos (cliente_id, fecha, total, estado)
+VALUES (1, CURRENT_DATE, 299.99, 'pendiente');
+
+-- Ver que el pedido ya existe (dentro de la transaccion)
+SELECT * FROM pedidos WHERE total = 299.99;
+
+-- Si todo esta bien, confirmar
+COMMIT;
+
+-- Ahora el pedido es permanente
+```
+
+Y si algo sale mal:
+
+```sql
+BEGIN;
+
+-- Intentamos actualizar precios
+UPDATE productos SET precio = precio * 0.8
+WHERE categoria = 'Electronica';
+
+-- Ups! No queriamos aplicar 20% de descuento...
+-- Deshacemos TODO lo que hicimos desde BEGIN
+ROLLBACK;
+
+-- Los precios quedan exactamente como estaban antes
+```
+
+### Paso a paso: que ocurre internamente
+
+```
+BEGIN;
+  │
+  ├─ PostgreSQL marca el inicio de la transaccion.
+  │  Los cambios se escriben en un "log" temporal.
+  │
+  ├─ INSERT INTO pedidos ...
+  │  → El pedido existe para TI, pero otros usuarios
+  │    aun no lo ven (aislamiento).
+  │
+  ├─ UPDATE productos SET stock = stock - 1 ...
+  │  → El stock cambia para TI, pero otros ven
+  │    el valor original.
+  │
+  └─ COMMIT;  ← Aqui PostgreSQL hace permanentes
+     │           todos los cambios de golpe.
+     │           Ahora todos los usuarios los ven.
+     │
+     └─ (Si hubieramos hecho ROLLBACK, PostgreSQL
+         descarta el log y todo queda como antes)
+```
+
+<Callout type="info" title="Autocommit">
+  Por defecto, PostgreSQL funciona en modo **autocommit**: cada sentencia SQL individual es su propia transaccion. Cuando ejecutas `UPDATE productos SET precio = 99 WHERE id = 1;` sin `BEGIN`, PostgreSQL hace automaticamente `BEGIN → UPDATE → COMMIT`. Por eso los cambios son inmediatos. Cuando usas `BEGIN` explicitamente, desactivas el autocommit hasta el `COMMIT` o `ROLLBACK`.
+</Callout>
+
+---
+
+## Transacciones e integridad de datos
+
+Las transacciones no son solo una conveniencia — son la **herramienta fundamental para mantener la integridad de tu base de datos**. Sin ellas, cualquier fallo a mitad de una operacion puede dejar tus datos en un estado corrupto e irrecuperable.
+
+### Que puede salir mal sin transacciones?
+
+Veamos escenarios reales con nuestra tienda:
+
+```
+Escenario 1: Pedido a medias
+  Sin transaccion:
+    INSERT INTO pedidos (...) → ✓ Pedido creado
+    INSERT INTO detalle_pedidos (...) → ✓ Detalle creado
+    UPDATE productos SET stock = stock - 5 → ✗ ERROR (conexion se cayo)
+
+  Resultado: Hay un pedido registrado, pero el stock no se desconto.
+  Se vendera stock que no existe. Los datos son INCONSISTENTES.
+
+Escenario 2: Transferencia entre cuentas
+  Sin transaccion:
+    UPDATE cuentas SET saldo = saldo - 1000 WHERE id = 1 → ✓ Se desconto
+    UPDATE cuentas SET saldo = saldo + 1000 WHERE id = 2 → ✗ ERROR
+
+  Resultado: Se desconto dinero de una cuenta pero no llego a la otra.
+  El dinero "desaparecio". Los datos son INCONSISTENTES.
+
+Escenario 3: Eliminacion con dependencias
+  Sin transaccion:
+    DELETE FROM detalle_pedidos WHERE pedido_id = 5 → ✓ Detalles borrados
+    DELETE FROM pedidos WHERE id = 5 → ✗ ERROR
+
+  Resultado: Los detalles se eliminaron pero el pedido sigue.
+  Pedido fantasma sin productos. Los datos son INCONSISTENTES.
+```
+
+Con transacciones, **ninguno de estos escenarios** puede ocurrir. Si algo falla, todo se revierte automaticamente al estado anterior.
+
+### Restricciones y transacciones trabajan juntas
+
+PostgreSQL verifica las restricciones de integridad (FOREIGN KEY, NOT NULL, UNIQUE, CHECK) **dentro de la transaccion**. Si una restriccion se viola, la operacion falla y puedes hacer ROLLBACK sin dano:
+
+```sql
+BEGIN;
+
+-- Intentar insertar un pedido para un cliente que no existe
+INSERT INTO pedidos (cliente_id, fecha, total, estado)
+VALUES (9999, CURRENT_DATE, 100, 'pendiente');
+-- ERROR: insert or update on table "pedidos" violates
+-- foreign key constraint "pedidos_cliente_id_fkey"
+
+-- La restriccion FOREIGN KEY protegio la integridad.
+-- Ningun dato quedo a medias.
+ROLLBACK;
+```
+
+<Callout type="warning" title="Regla de oro de integridad">
+  Siempre que una operacion involucre **mas de una tabla** o **mas de una sentencia** que dependan entre si, usa una transaccion. Es la unica forma de garantizar que tus datos se mantengan consistentes ante cualquier fallo.
+</Callout>
+
+### Propiedades ACID
+
+Las transacciones garantizan cuatro propiedades conocidas como **ACID**:
+
+<CommandTable
+  commands={[
+    { command: "Atomicidad", description: "Todo o nada. Si una operacion falla, se revierten todas. No hay estados parciales." },
+    { command: "Consistencia", description: "La BD pasa de un estado valido a otro estado valido. Las restricciones (NOT NULL, FOREIGN KEY, CHECK) se verifican. Nunca quedan datos a medias." },
+    { command: "Aislamiento", description: "Las transacciones concurrentes no se interfieren. Cada una ve una 'foto' consistente de los datos hasta que se confirme." },
+    { command: "Durabilidad", description: "Una vez que haces COMMIT, los datos sobreviven incluso a un corte de luz o un crash del servidor. PostgreSQL escribe en disco antes de confirmar." },
+  ]}
+/>
+
+Estas propiedades son lo que diferencia una base de datos relacional de un simple archivo de texto. Sin ACID, no puedes confiar en que tus datos sean correctos.
+
+---
+
+## Ejemplo practico: procesar un pedido
+
+Este es el caso de uso mas comun de transacciones. Procesar un pedido involucra varias tablas que deben mantenerse consistentes:
+
+```sql
+BEGIN;
+
+-- 1. Crear el pedido
+INSERT INTO pedidos (cliente_id, fecha, total, estado)
+VALUES (3, CURRENT_DATE, 0, 'pendiente')
+RETURNING id;
+-- Supongamos que devuelve id = 25
+
+-- 2. Agregar productos al detalle
+INSERT INTO detalle_pedidos (pedido_id, producto_id, cantidad, precio_unitario)
+VALUES
+  (25, 1, 2, 299.99),  -- 2 unidades del producto 1
+  (25, 5, 1, 49.99);   -- 1 unidad del producto 5
+
+-- 3. Actualizar stock
+UPDATE productos SET stock = stock - 2 WHERE id = 1;
+UPDATE productos SET stock = stock - 1 WHERE id = 5;
+
+-- 4. Actualizar el total del pedido
+UPDATE pedidos
+SET total = (
+  SELECT SUM(cantidad * precio_unitario)
+  FROM detalle_pedidos
+  WHERE pedido_id = 25
+)
+WHERE id = 25;
+
+-- 5. Todo salio bien, confirmar
+COMMIT;
+```
+
+Si cualquier paso falla (por ejemplo, el producto no existe o el stock queda negativo), puedes hacer `ROLLBACK` y la base de datos queda exactamente como estaba antes.
+
+<Callout type="warning" title="Transacciones en produccion">
+  En una aplicacion real, el codigo de tu programa (Python, Node.js, Java, etc.) captura errores y decide si hacer `COMMIT` o `ROLLBACK`. Nunca dejes transacciones abiertas sin cerrar: bloquean filas y degradan el rendimiento.
+</Callout>
+
+---
+
+## SAVEPOINT: Puntos de guardado parciales
+
+A veces quieres revertir **solo parte** de una transaccion. Para eso existen los `SAVEPOINT`:
+
+```sql
+BEGIN;
+
+-- Insertar pedido
+INSERT INTO pedidos (cliente_id, fecha, total, estado)
+VALUES (2, CURRENT_DATE, 150.00, 'pendiente');
+
+-- Crear punto de guardado
+SAVEPOINT antes_de_stock;
+
+-- Intentar actualizar stock
+UPDATE productos SET stock = stock - 100 WHERE id = 3;
+
+-- Verificar que no quedo negativo
+-- (si quedo negativo, revertir solo la actualizacion de stock)
+ROLLBACK TO SAVEPOINT antes_de_stock;
+
+-- El pedido sigue existiendo, pero el stock no se toco
+-- Podemos intentar con otra cantidad
+UPDATE productos SET stock = stock - 1 WHERE id = 3;
+
+COMMIT;
+```
+
+<CommandTable
+  commands={[
+    { command: "SAVEPOINT nombre", description: "Crea un punto de guardado dentro de la transaccion." },
+    { command: "ROLLBACK TO SAVEPOINT nombre", description: "Revierte todo lo hecho DESPUES del savepoint. La transaccion sigue activa." },
+    { command: "RELEASE SAVEPOINT nombre", description: "Elimina el savepoint (libera recursos). Los cambios permanecen." },
+  ]}
+/>
+
+Puedes anidar savepoints:
+
+```sql
+BEGIN;
+
+INSERT INTO pedidos (cliente_id, fecha, total, estado)
+VALUES (1, CURRENT_DATE, 500.00, 'pendiente');
+
+SAVEPOINT sp1;
+
+  INSERT INTO detalle_pedidos (pedido_id, producto_id, cantidad, precio_unitario)
+  VALUES (26, 1, 5, 299.99);
+
+  SAVEPOINT sp2;
+
+    UPDATE productos SET stock = stock - 5 WHERE id = 1;
+    -- Si falla, podemos volver a sp2, sp1, o hacer ROLLBACK completo
+
+  ROLLBACK TO SAVEPOINT sp2;
+  -- Solo se deshizo el UPDATE, el INSERT de detalle sigue
+
+ROLLBACK TO SAVEPOINT sp1;
+-- Se deshizo el INSERT de detalle tambien, solo queda el pedido
+
+COMMIT;
+```
+
+---
+
+## Errores dentro de transacciones
+
+En PostgreSQL, si ocurre un **error** dentro de una transaccion, esta queda en estado **abortado**. No puedes ejecutar mas sentencias hasta que hagas `ROLLBACK`:
+
+```sql
+BEGIN;
+
+INSERT INTO pedidos (cliente_id, fecha, total, estado)
+VALUES (1, CURRENT_DATE, 100, 'pendiente');
+
+-- Esto causa un error (supongamos que viola una restriccion)
+INSERT INTO detalle_pedidos (pedido_id, producto_id, cantidad, precio_unitario)
+VALUES (999, 999, 1, 10.00);
+-- ERROR: insert or update on table "detalle_pedidos" violates
+-- foreign key constraint
+
+-- La transaccion esta en estado "abortado"
+-- Cualquier sentencia que ejecutes ahora dara:
+-- ERROR: current transaction is aborted
+
+-- La UNICA opcion es ROLLBACK
+ROLLBACK;
+```
+
+<Callout type="tip" title="SAVEPOINT para manejar errores">
+  Si quieres manejar errores sin perder toda la transaccion, usa `SAVEPOINT` antes de operaciones riesgosas. Si falla, haz `ROLLBACK TO SAVEPOINT` y continua con otra estrategia.
+</Callout>
+
+---
+
+## Transacciones y bloqueos
+
+Cuando modificas una fila dentro de una transaccion, PostgreSQL **bloquea** esa fila hasta que hagas `COMMIT` o `ROLLBACK`. Otros usuarios que intenten modificar la misma fila tendran que **esperar**.
+
+```sql
+-- Sesion A:
+BEGIN;
+UPDATE productos SET stock = stock - 1 WHERE id = 5;
+-- La fila id=5 esta bloqueada para escritura
+
+-- Sesion B (al mismo tiempo):
+UPDATE productos SET stock = stock + 10 WHERE id = 5;
+-- Sesion B se QUEDA ESPERANDO hasta que Sesion A
+-- haga COMMIT o ROLLBACK
+
+-- Sesion A:
+COMMIT;
+-- Ahora Sesion B puede continuar
+```
+
+<Callout type="warning" title="Deadlocks">
+  Si la Sesion A bloquea la fila 1 y espera la fila 2, mientras la Sesion B bloquea la fila 2 y espera la fila 1, se produce un **deadlock** (bloqueo mutuo). PostgreSQL detecta deadlocks automaticamente y cancela una de las transacciones con un error. La solucion es siempre bloquear las filas en el **mismo orden**.
+</Callout>
+
+---
+
+## Niveles de aislamiento
+
+PostgreSQL soporta cuatro niveles de aislamiento que controlan cuanto "ve" una transaccion de los cambios hechos por otras transacciones concurrentes:
+
+<CommandTable
+  commands={[
+    { command: "READ UNCOMMITTED", description: "En PostgreSQL se comporta igual que READ COMMITTED (no permite lecturas sucias)." },
+    { command: "READ COMMITTED (default)", description: "Cada sentencia ve los datos confirmados hasta ese momento. Si otra transaccion hizo COMMIT entre tus sentencias, veras los nuevos datos." },
+    { command: "REPEATABLE READ", description: "La transaccion ve una 'foto' de los datos al inicio. No importa si otros hacen COMMIT mientras tanto, siempre ves lo mismo." },
+    { command: "SERIALIZABLE", description: "El nivel mas estricto. Simula que las transacciones se ejecutan una despues de otra. PostgreSQL puede cancelar transacciones si detecta conflictos." },
+  ]}
+/>
+
+```sql
+-- Cambiar el nivel de aislamiento (debe ser lo primero despues de BEGIN)
+BEGIN;
+SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+-- Ahora esta transaccion siempre vera la misma foto de los datos
+SELECT SUM(total) FROM pedidos WHERE estado = 'completado';
+-- ... otras operaciones ...
+-- Aunque otro usuario agregue pedidos completados mientras tanto,
+-- esta consulta siempre devuelve el mismo resultado
+
+COMMIT;
+```
+
+<Callout type="info">
+  Para la mayoria de las aplicaciones, el nivel por defecto `READ COMMITTED` funciona bien. Usa `REPEATABLE READ` cuando necesites consistencia absoluta en lecturas (como generar reportes financieros). `SERIALIZABLE` es para casos muy especificos donde no puedes tolerar ninguna anomalia.
+</Callout>
+
+---
+
+## Patron practico: UPDATE seguro con verificacion
+
+Un patron muy util es usar transacciones para verificar antes de confirmar:
+
+```sql
+BEGIN;
+
+-- Verificar el estado actual
+SELECT id, nombre, stock FROM productos WHERE id = 3;
+
+-- Actualizar solo si tiene suficiente stock
+UPDATE productos SET stock = stock - 5 WHERE id = 3 AND stock >= 5;
+
+-- Verificar cuantas filas se actualizaron
+-- Si 0 filas, significa que no habia suficiente stock
+
+-- Si todo esta bien
+COMMIT;
+
+-- Si algo no salio como esperabas
+-- ROLLBACK;
+```
+
+Y para operaciones masivas peligrosas:
+
+```sql
+BEGIN;
+
+-- Primero ver que vamos a eliminar
+SELECT COUNT(*) FROM pedidos WHERE estado = 'cancelado' AND fecha < '2024-01-01';
+-- Resultado: 47 filas
+
+-- Si el numero parece correcto, eliminar
+DELETE FROM detalle_pedidos
+WHERE pedido_id IN (
+  SELECT id FROM pedidos WHERE estado = 'cancelado' AND fecha < '2024-01-01'
+);
+
+DELETE FROM pedidos WHERE estado = 'cancelado' AND fecha < '2024-01-01';
+
+-- Verificar que todo quedo bien
+SELECT COUNT(*) FROM pedidos WHERE estado = 'cancelado' AND fecha < '2024-01-01';
+-- Resultado: 0 filas ✓
+
+COMMIT;
+-- (o ROLLBACK si algo no cuadra)
+```
+
+<Callout type="tip" title="EXPLAIN ANALYZE seguro">
+  Si quieres probar el plan de ejecucion de un `DELETE` o `UPDATE` sin aplicarlo realmente, envuelvelo en una transaccion que luego reviertes:
+
+  ```sql
+  BEGIN;
+  EXPLAIN ANALYZE DELETE FROM pedidos WHERE estado = 'cancelado';
+  ROLLBACK;  -- Los datos no se eliminaron
+  ```
+</Callout>
+
+---
+
+## Ejercicios
+
+**Ejercicio 1:** Escribe una transaccion que inserte un nuevo cliente y un pedido para ese cliente. Si la insercion del pedido falla, ambos cambios deben revertirse.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+BEGIN;
+
+INSERT INTO clientes (nombre, email, ciudad)
+VALUES ('Daniela Rojas', 'daniela@email.com', 'Temuco');
+
+-- Obtener el ID del nuevo cliente
+-- (asumiendo que es el ultimo insertado)
+INSERT INTO pedidos (cliente_id, fecha, total, estado)
+VALUES (
+  (SELECT id FROM clientes WHERE email = 'daniela@email.com'),
+  CURRENT_DATE,
+  250.00,
+  'pendiente'
+);
+
+COMMIT;
+-- Si cualquier INSERT falla, ejecutar ROLLBACK en su lugar
+```
+
+</details>
+
+**Ejercicio 2:** Crea una transaccion que aplique un 15% de descuento a todos los productos de la categoria 'Muebles'. Usa un SELECT antes y despues del UPDATE para verificar los cambios. No hagas COMMIT todavia — termina con ROLLBACK para que los precios no cambien realmente.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+BEGIN;
+
+-- Ver precios actuales
+SELECT nombre, precio, categoria
+FROM productos
+WHERE categoria = 'Muebles'
+ORDER BY precio DESC;
+
+-- Aplicar descuento
+UPDATE productos
+SET precio = ROUND(precio * 0.85, 2)
+WHERE categoria = 'Muebles';
+
+-- Verificar cambios
+SELECT nombre, precio, categoria
+FROM productos
+WHERE categoria = 'Muebles'
+ORDER BY precio DESC;
+
+-- Revertir (no queremos aplicar el descuento realmente)
+ROLLBACK;
+```
+
+</details>
+
+**Ejercicio 3:** Escribe una transaccion con SAVEPOINT que intente actualizar el stock de dos productos. Si la segunda actualizacion dejaria el stock negativo, revierte solo esa operacion (con ROLLBACK TO SAVEPOINT), pero mantiene la primera.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+BEGIN;
+
+-- Primera actualizacion (segura)
+UPDATE productos SET stock = stock - 1 WHERE id = 1;
+
+-- Punto de guardado
+SAVEPOINT antes_segundo_update;
+
+-- Segunda actualizacion (podria dejar stock negativo)
+UPDATE productos SET stock = stock - 999 WHERE id = 2;
+
+-- Verificar si quedo negativo
+-- (en una app real, esto lo haria el codigo del programa)
+SELECT id, nombre, stock FROM productos WHERE id = 2;
+
+-- Si stock < 0, revertir solo la segunda operacion
+ROLLBACK TO SAVEPOINT antes_segundo_update;
+
+-- La primera actualizacion sigue en pie
+COMMIT;
+```
+
+</details>
+
+**Ejercicio 4:** Simula el procesamiento completo de un pedido: insertar el pedido, agregar 2 productos al detalle, actualizar el stock de esos productos, y calcular el total del pedido. Todo dentro de una transaccion.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+BEGIN;
+
+-- 1. Crear pedido (cliente_id = 2)
+INSERT INTO pedidos (cliente_id, fecha, total, estado)
+VALUES (2, CURRENT_DATE, 0, 'pendiente')
+RETURNING id;
+-- Supongamos que devuelve id = 30
+
+-- 2. Agregar productos
+INSERT INTO detalle_pedidos (pedido_id, producto_id, cantidad, precio_unitario)
+VALUES
+  (30, 3, 2, (SELECT precio FROM productos WHERE id = 3)),
+  (30, 7, 1, (SELECT precio FROM productos WHERE id = 7));
+
+-- 3. Actualizar stock
+UPDATE productos SET stock = stock - 2 WHERE id = 3;
+UPDATE productos SET stock = stock - 1 WHERE id = 7;
+
+-- 4. Calcular y actualizar total
+UPDATE pedidos
+SET total = (
+  SELECT SUM(cantidad * precio_unitario)
+  FROM detalle_pedidos
+  WHERE pedido_id = 30
+)
+WHERE id = 30;
+
+-- 5. Verificar
+SELECT p.id, p.total, p.estado,
+  dp.producto_id, dp.cantidad, dp.precio_unitario
+FROM pedidos p
+JOIN detalle_pedidos dp ON p.id = dp.pedido_id
+WHERE p.id = 30;
+
+-- 6. Confirmar (o ROLLBACK para practicar sin modificar datos)
+ROLLBACK;
+```
+
+</details>
+
+**Ejercicio 5:** Explica que pasa en cada paso de esta secuencia y cual es el estado final de los datos:
+
+```sql
+BEGIN;
+UPDATE productos SET precio = 999 WHERE id = 1;
+SAVEPOINT sp1;
+UPDATE productos SET precio = 0 WHERE id = 1;
+ROLLBACK TO SAVEPOINT sp1;
+COMMIT;
+```
+
+<details>
+<summary>Ver solucion</summary>
+
+Paso a paso:
+
+1. `BEGIN` — Inicia la transaccion.
+2. `UPDATE ... precio = 999` — El precio del producto 1 cambia a 999 (dentro de la transaccion).
+3. `SAVEPOINT sp1` — Se crea un punto de guardado. En este punto, precio = 999.
+4. `UPDATE ... precio = 0` — El precio cambia a 0 (dentro de la transaccion).
+5. `ROLLBACK TO SAVEPOINT sp1` — Se deshace todo lo hecho **despues** de sp1. El precio vuelve a 999.
+6. `COMMIT` — Se confirma la transaccion. El precio final es **999**.
+
+El `UPDATE ... precio = 0` se descarto con el `ROLLBACK TO SAVEPOINT`, pero el `UPDATE ... precio = 999` (que fue antes del savepoint) se mantuvo y se confirmo con `COMMIT`.
+
+</details>
