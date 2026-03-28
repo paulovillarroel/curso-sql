@@ -269,6 +269,20 @@ RETURNING id, nombre;
 UPDATE productos SET precio = precio * 0.9
 WHERE categoria = 'Electronica'
 RETURNING id, nombre, precio;
+
+-- Actualizar varios registros con valores distintos (CASE)
+UPDATE productos
+SET precio = CASE id
+    WHEN 1 THEN 299.99
+    WHEN 2 THEN 149.50
+    WHEN 3 THEN 89.99
+    END
+WHERE id IN (1, 2, 3);
+
+-- Actualizar varios registros con valores distintos (FROM VALUES)
+UPDATE productos SET precio = v.precio
+FROM (VALUES (1, 299.99), (2, 149.50), (3, 89.99)) AS v(id, precio)
+WHERE productos.id = v.id;
 ```
 
 <Callout type="warning" title="Regla de oro: SELECT antes de UPDATE/DELETE">

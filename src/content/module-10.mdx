@@ -187,6 +187,82 @@ RETURNING id, nombre, precio;
 
 Esto te muestra exactamente que filas fueron actualizadas y con que valores.
 
+#### Actualizar varios registros con valores distintos
+
+A veces necesitas actualizar muchos registros a la vez, pero cada uno con un valor diferente. Por ejemplo, actualizar los precios de varios productos de una sola vez.
+
+**Opcion 1: UPDATE con CASE**
+
+La forma mas comun es usar `CASE` dentro del `SET`:
+
+```sql
+UPDATE productos
+SET precio = CASE id
+    WHEN 1 THEN 299.99
+    WHEN 2 THEN 149.50
+    WHEN 3 THEN 89.99
+    WHEN 5 THEN 199.00
+    END
+WHERE id IN (1, 2, 3, 5);
+```
+
+<Callout type="warning" title="No olvides el WHERE">
+  El `WHERE id IN (...)` es **fundamental**. Sin el, las filas que no estan en el CASE reciben valor `NULL` porque el CASE no tiene `ELSE`. Siempre filtra solo los IDs que quieres modificar.
+</Callout>
+
+Tambien podes actualizar varias columnas a la vez:
+
+```sql
+UPDATE productos
+SET
+    precio = CASE id
+        WHEN 1 THEN 299.99
+        WHEN 2 THEN 149.50
+        WHEN 3 THEN 89.99
+        END,
+    stock = CASE id
+        WHEN 1 THEN 50
+        WHEN 2 THEN 30
+        WHEN 3 THEN 100
+        END
+WHERE id IN (1, 2, 3);
+```
+
+**Opcion 2: UPDATE con FROM VALUES**
+
+Para muchos registros, esta sintaxis es mas limpia. Usas una lista de valores como si fuera una tabla temporal:
+
+```sql
+UPDATE productos
+SET precio = nuevos.precio
+FROM (VALUES
+    (1, 299.99),
+    (2, 149.50),
+    (3, 89.99),
+    (5, 199.00)
+) AS nuevos(id, precio)
+WHERE productos.id = nuevos.id;
+```
+
+Tambien funciona con varias columnas:
+
+```sql
+UPDATE productos
+SET
+    precio = nuevos.precio,
+    stock = nuevos.stock
+FROM (VALUES
+    (1, 299.99, 50),
+    (2, 149.50, 30),
+    (3, 89.99, 100)
+) AS nuevos(id, precio, stock)
+WHERE productos.id = nuevos.id;
+```
+
+<Callout type="tip" title="¿CASE o FROM VALUES?">
+  Ambos logran lo mismo. `CASE` es mas facil de entender para principiantes. `FROM VALUES` es mas limpio cuando tienes muchos registros o varias columnas que actualizar, y se parece mas a un JOIN.
+</Callout>
+
 ---
 
 ### DELETE: eliminando datos
