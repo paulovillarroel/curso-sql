@@ -304,6 +304,9 @@ ALTER TABLE productos DROP COLUMN descripcion;
 -- Renombrar columna
 ALTER TABLE productos RENAME COLUMN stock TO cantidad_disponible;
 
+-- Renombrar tabla
+ALTER TABLE productos_backup RENAME TO productos_respaldo;
+
 -- Cambiar tipo de dato
 ALTER TABLE productos ALTER COLUMN nombre TYPE VARCHAR(200);
 
@@ -342,6 +345,16 @@ CREATE TABLE ejemplo (
     id SERIAL PRIMARY KEY,
     nombre VARCHAR(100) NOT NULL
 );
+
+-- Copiar tabla completa (estructura + datos, sin restricciones)
+CREATE TABLE productos_backup AS SELECT * FROM productos;
+
+-- Copiar solo algunas columnas/filas
+CREATE TABLE electronica AS
+SELECT nombre, precio FROM productos WHERE categoria = 'Electronica';
+
+-- SELECT INTO (alternativa)
+SELECT * INTO productos_copia FROM productos WHERE stock > 50;
 ```
 
 ---
@@ -373,7 +386,11 @@ FROM empleados;
   { command: "NTILE(n) OVER(...)", description: "Divide filas en n grupos iguales" },
   { command: "LAG(col, n) OVER(...)", description: "Valor de n filas antes" },
   { command: "LEAD(col, n) OVER(...)", description: "Valor de n filas despues" },
+  { command: "FIRST_VALUE(col) OVER(...)", description: "Primer valor de la ventana" },
+  { command: "LAST_VALUE(col) OVER(...)", description: "Ultimo valor (requiere ROWS UNBOUNDED FOLLOWING)" },
   { command: "SUM(col) OVER(ORDER BY ...)", description: "Suma acumulada (running total)" },
+  { command: "PERCENT_RANK() OVER(...)", description: "Posicion relativa (0 a 1)" },
+  { command: "CUME_DIST() OVER(...)", description: "Distribucion acumulada" },
 ]} />
 
 ```sql
@@ -432,6 +449,44 @@ SELECT
     COUNT(*) FILTER (WHERE estado = 'pendiente') AS pendientes,
     AVG(total) FILTER (WHERE estado = 'completado') AS promedio_completados
 FROM pedidos;
+```
+
+---
+
+### GROUPING SETS, ROLLUP y CUBE
+
+```sql
+-- ROLLUP: subtotales jerarquicos + total general
+SELECT COALESCE(categoria, '** TOTAL **') AS categoria,
+    SUM(cantidad) AS unidades
+FROM detalle_pedidos dp JOIN productos pr ON dp.producto_id = pr.id
+GROUP BY ROLLUP(pr.categoria);
+
+-- CUBE: todas las combinaciones de subtotales
+GROUP BY CUBE(categoria, estado)
+
+-- GROUPING SETS: combinaciones especificas
+GROUP BY GROUPING SETS ((categoria, estado), (categoria), (estado), ())
+```
+
+---
+
+### Tablas pivote (filas a columnas)
+
+```sql
+-- Ventas por cliente como columnas por mes
+SELECT c.nombre,
+    SUM(CASE WHEN EXTRACT(MONTH FROM p.fecha) = 1 THEN p.total ELSE 0 END) AS enero,
+    SUM(CASE WHEN EXTRACT(MONTH FROM p.fecha) = 2 THEN p.total ELSE 0 END) AS febrero
+FROM clientes c JOIN pedidos p ON c.id = p.cliente_id
+GROUP BY c.nombre;
+
+-- Version con FILTER (PostgreSQL)
+SELECT c.nombre,
+    SUM(p.total) FILTER (WHERE EXTRACT(MONTH FROM p.fecha) = 1) AS enero,
+    SUM(p.total) FILTER (WHERE EXTRACT(MONTH FROM p.fecha) = 2) AS febrero
+FROM clientes c JOIN pedidos p ON c.id = p.cliente_id
+GROUP BY c.nombre;
 ```
 
 ---

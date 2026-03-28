@@ -66,6 +66,35 @@ WHERE precio > 100;
 
 Esto es muy util para crear tablas de resumen, copiar datos entre tablas, o poblar tablas temporales.
 
+#### Copiar una tabla completa
+
+Si quieres crear una **copia completa** de una tabla (estructura + datos) en un solo paso, usa `CREATE TABLE ... AS`:
+
+```sql
+-- Copiar tabla completa con datos
+CREATE TABLE productos_backup AS
+SELECT * FROM productos;
+
+-- Copiar solo algunas columnas o filas
+CREATE TABLE electronica AS
+SELECT nombre, precio, stock
+FROM productos
+WHERE categoria = 'Electronica';
+```
+
+<Callout type="warning" title="CREATE TABLE AS no copia restricciones">
+  `CREATE TABLE ... AS` copia los datos y los tipos de columna, pero **no copia** PRIMARY KEY, FOREIGN KEY, NOT NULL, DEFAULT ni indices. Si necesitas esas restricciones, crea la tabla manualmente con `CREATE TABLE` y luego usa `INSERT INTO ... SELECT` para copiar los datos.
+</Callout>
+
+Tambien existe `SELECT INTO`, que hace lo mismo pero con otra sintaxis:
+
+```sql
+-- Equivalente a CREATE TABLE ... AS
+SELECT * INTO productos_backup
+FROM productos
+WHERE stock > 50;
+```
+
 #### INSERT con RETURNING
 
 Una funcionalidad muy util de PostgreSQL: podes obtener los datos insertados de vuelta, incluyendo los valores generados automaticamente como el `id`.
@@ -495,6 +524,15 @@ ALTER TABLE productos
 RENAME COLUMN stock TO cantidad_disponible;
 ```
 
+#### Renombrar una tabla
+
+```sql
+ALTER TABLE productos_backup
+RENAME TO productos_respaldo;
+```
+
+Esto cambia el nombre de la tabla en toda la base de datos. Las foreign keys que apuntan a esta tabla se actualizan automaticamente, pero las consultas guardadas o vistas que la referencian por el nombre antiguo dejaran de funcionar.
+
 #### Cambiar el tipo de dato
 
 ```sql
@@ -512,6 +550,7 @@ ALTER COLUMN nombre TYPE VARCHAR(200);
   { command: "ADD COLUMN nombre tipo", description: "Agrega una nueva columna a la tabla" },
   { command: "DROP COLUMN nombre", description: "Elimina una columna y todos sus datos" },
   { command: "RENAME COLUMN viejo TO nuevo", description: "Cambia el nombre de una columna" },
+  { command: "RENAME TO nuevo_nombre", description: "Cambia el nombre de la tabla" },
   { command: "ALTER COLUMN nombre TYPE tipo", description: "Cambia el tipo de dato de una columna" },
   { command: "ALTER COLUMN nombre SET DEFAULT valor", description: "Establece un valor por defecto" },
   { command: "ALTER COLUMN nombre SET NOT NULL", description: "Hace la columna obligatoria (no acepta NULL)" },

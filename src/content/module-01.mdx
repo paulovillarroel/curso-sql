@@ -104,6 +104,84 @@ Si ya usas alguno de estos, vas a notar que aprender SQL se siente familiar. Y s
   Cada operacion SQL tiene un costo computacional. Cuando escribes `SELECT * FROM clientes`, la base de datos tiene que leer **todas** las columnas de cada fila, transferirlas por red y formatearlas para mostrartelas — aunque solo necesites el nombre y el email. Por eso, en aplicaciones reales siempre se especifican las columnas exactas que se necesitan (`SELECT nombre, email FROM clientes`). El `SELECT *` es perfecto para explorar datos o dar tus primeros pasos con una tabla, pero en produccion es un desperdicio de recursos. A lo largo de este curso vamos a ir aprendiendo como escribir consultas que hagan solo el trabajo necesario.
 </Callout>
 
+---
+
+### Ejercicios
+
+Estos ejercicios no requieren tener PostgreSQL instalado todavia. Son para reforzar los conceptos de este modulo. En el Modulo 2 vas a preparar tu entorno y cargar la base de datos `tienda` que usaremos en todo el curso.
+
+<Callout type="info" title="La base de datos tienda">
+  A lo largo del curso trabajaremos con una base de datos llamada `tienda` que tiene 5 tablas: `productos` (id, nombre, precio, categoria, stock, fecha_creacion), `clientes` (id, nombre, email, ciudad, fecha_registro), `pedidos` (id, cliente_id, fecha, total, estado), `detalle_pedidos` (id, pedido_id, producto_id, cantidad, precio_unitario) y `empleados` (id, nombre, departamento, salario, fecha_contratacion, jefe_id).
+</Callout>
+
+**Ejercicio 1:** Imagina que tienes la tabla `productos` con las columnas: id, nombre, precio, categoria, stock y fecha_creacion. Escribe **en palabras** que le pedirias a SQL para obtener: (a) todos los nombres de productos, y (b) los productos con precio mayor a 100.
+
+<details>
+<summary>Ver solucion</summary>
+
+(a) "Dame la columna nombre de la tabla productos" → `SELECT nombre FROM productos;`
+
+(b) "Dame todos los productos donde el precio sea mayor a 100" → `SELECT * FROM productos WHERE precio > 100;`
+
+Lo importante es que pienses en **que quieres**, no en **como** obtenerlo. SQL es declarativo: describes el resultado, no los pasos.
+</details>
+
+**Ejercicio 2:** Identifica cual de estos enfoques es **declarativo** y cual es **imperativo**:
+
+- **Opcion A:** "Recorre cada fila de la tabla clientes. Si la ciudad es 'Santiago', guarda el nombre en una lista."
+- **Opcion B:** "Dame los nombres de la tabla clientes donde la ciudad sea Santiago."
+
+<details>
+<summary>Ver solucion</summary>
+
+- **Opcion A es imperativa**: describes los pasos (recorrer, verificar, guardar). Es como lo harias en Python o JavaScript con un bucle.
+- **Opcion B es declarativa**: describes el resultado que quieres. Es como lo haces en SQL:
+
+```sql
+SELECT nombre FROM clientes WHERE ciudad = 'Santiago';
+```
+
+En SQL siempre usamos el enfoque B. Le decimos a la base de datos **que** queremos y ella decide **como** obtenerlo.
+</details>
+
+**Ejercicio 3:** Sin ejecutar nada, lee esta consulta SQL y describe en palabras que resultado esperas:
+
+```sql
+SELECT nombre, precio
+FROM productos
+WHERE categoria = 'Electronica'
+ORDER BY precio DESC;
+```
+
+<details>
+<summary>Ver solucion</summary>
+
+"Dame el nombre y precio de todos los productos que son de la categoria Electronica, ordenados de mayor a menor precio."
+
+El resultado seria una lista de productos electronicos mostrando solo dos columnas (nombre y precio), con el mas caro arriba y el mas barato abajo. Desglose:
+- `SELECT nombre, precio` → solo esas dos columnas
+- `FROM productos` → de la tabla productos
+- `WHERE categoria = 'Electronica'` → solo los de esa categoria
+- `ORDER BY precio DESC` → ordenados de mayor a menor
+</details>
+
+**Ejercicio 4:** ¿Por que `SELECT * FROM productos` es menos eficiente que `SELECT nombre, precio FROM productos`? ¿En que situacion usarias `SELECT *`?
+
+<details>
+<summary>Ver solucion</summary>
+
+`SELECT *` pide **todas** las columnas de la tabla (id, nombre, precio, categoria, stock, fecha_creacion), aunque solo necesites dos. Esto significa:
+- Mas datos leidos del disco
+- Mas datos transferidos por la red
+- Mas memoria usada para procesar los resultados
+
+`SELECT nombre, precio` solo pide las columnas que necesitas, lo cual es mas rapido y consume menos recursos.
+
+**¿Cuando usar `SELECT *`?** Es util para **explorar** una tabla que no conoces, para ver su estructura y datos. Pero en consultas de produccion (aplicaciones, reportes automaticos), siempre es mejor especificar las columnas exactas.
+</details>
+
+---
+
 ## ¿Que sigue?
 
 En el proximo modulo vas a preparar tu entorno de trabajo: instalar PostgreSQL, configurar DBeaver y cargar la base de datos de practica que usaremos a lo largo de todo el curso.

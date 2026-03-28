@@ -271,6 +271,47 @@ La primera fila tiene NULL porque no hay mes anterior. Puedes usar el tercer par
 
 ---
 
+## FIRST_VALUE, LAST_VALUE y NTH_VALUE
+
+Estas funciones acceden a un valor especifico dentro de la ventana: el primero, el ultimo o el N-esimo.
+
+<CommandTable commands={[
+  { command: "FIRST_VALUE(col) OVER(...)", description: "Devuelve el valor de la primera fila de la ventana." },
+  { command: "LAST_VALUE(col) OVER(...)", description: "Devuelve el valor de la ultima fila de la ventana." },
+  { command: "NTH_VALUE(col, n) OVER(...)", description: "Devuelve el valor de la fila N de la ventana." },
+]} />
+
+```sql
+-- Para cada empleado: mostrar quien gana mas y quien gana menos en su departamento
+SELECT
+  nombre,
+  departamento,
+  salario,
+  FIRST_VALUE(nombre) OVER (
+    PARTITION BY departamento ORDER BY salario DESC
+  ) AS mejor_pagado,
+  FIRST_VALUE(nombre) OVER (
+    PARTITION BY departamento ORDER BY salario ASC
+  ) AS peor_pagado
+FROM empleados
+ORDER BY departamento, salario DESC;
+```
+
+<Callout type="warning" title="Cuidado con LAST_VALUE">
+  Por defecto, la ventana va desde el inicio hasta la fila actual (`ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`). Esto significa que `LAST_VALUE` devuelve la fila actual, no la ultima del grupo. Para obtener la verdadera ultima fila, necesitas especificar la ventana completa:
+
+  ```sql
+  LAST_VALUE(nombre) OVER (
+    PARTITION BY departamento ORDER BY salario
+    ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+  )
+  ```
+
+  Por eso, en la practica, es mas simple usar `FIRST_VALUE` con el orden invertido.
+</Callout>
+
+---
+
 ## Agregaciones acumulativas y promedios moviles
 
 Cuando usas una funcion de agregacion (SUM, AVG, COUNT) con `OVER(ORDER BY ...)`, obtienes un **calculo acumulativo**: cada fila incluye los datos de todas las filas anteriores.
@@ -349,6 +390,290 @@ ORDER BY c.nombre, p.fecha;
 ```
 
 Esto muestra como va creciendo el gasto de cada cliente pedido a pedido. `PARTITION BY c.id` reinicia el acumulado para cada cliente.
+
+### Marcos de ventana: ROWS vs RANGE
+
+Cuando usas `ORDER BY` en una funcion de ventana, PostgreSQL define un **marco** que determina que filas se incluyen en el calculo. Hay dos tipos principales:
+
+<CommandTable commands={[
+  { command: "ROWS BETWEEN", description: "Cuenta filas fisicas. '2 PRECEDING' = exactamente 2 filas antes. Es el mas predecible." },
+  { command: "RANGE BETWEEN", description: "Usa el valor de ORDER BY. Incluye filas con el mismo valor (empates). Es el default con ORDER BY." },
+  { command: "UNBOUNDED PRECEDING", description: "Desde la primera fila de la ventana." },
+  { command: "CURRENT ROW", description: "Hasta la fila actual." },
+  { command: "UNBOUNDED FOLLOWING", description: "Hasta la ultima fila de la ventana." },
+  { command: "n PRECEDING / n FOLLOWING", description: "n filas antes/despues de la actual." },
+]} />
+
+La diferencia importa cuando hay valores duplicados en el `ORDER BY`:
+
+```sql
+-- ROWS: exactamente 2 filas anteriores + actual = 3 filas siempre
+SUM(total) OVER (ORDER BY fecha ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)
+
+-- RANGE: incluye TODAS las filas con el mismo valor de fecha
+-- Si hay 3 pedidos el mismo dia, los incluye todos
+SUM(total) OVER (ORDER BY fecha RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+```
+
+<Callout type="tip" title="¿Cual usar?">
+  En la practica, `ROWS` es mas predecible y mas usado para promedios moviles y ventanas deslizantes. `RANGE` es util cuando quieres que los empates se traten como iguales (por ejemplo, todos los pedidos del mismo dia sumen igual).
+</Callout>
+
+### CUME_DIST y PERCENT_RANK: distribucion
+
+Estas funciones te dicen donde esta cada fila en la distribucion del grupo:
+
+```sql
+SELECT
+  nombre,
+  salario,
+  ROUND(PERCENT_RANK() OVER (ORDER BY salario)::NUMERIC, 4) AS percent_rank,
+  ROUND(CUME_DIST() OVER (ORDER BY salario)::NUMERIC, 4) AS cume_dist
+FROM empleados
+ORDER BY salario;
+```
+
+```
+ nombre              │ salario │ percent_rank │ cume_dist
+─────────────────────┼─────────┼──────────────┼──────────
+ Patricia Herrera    │  36000  │   0.0000     │  0.1000    ← 10% gana esto o menos
+ Ricardo Soto        │  38000  │   0.1111     │  0.2000
+ Fernanda Luna       │  40000  │   0.2222     │  0.3000
+ ...
+ Sofia Mendez        │  85000  │   1.0000     │  1.0000    ← 100% gana esto o menos
+```
+
+- **PERCENT_RANK**: posicion relativa (0 = primero, 1 = ultimo). Formula: `(rank - 1) / (total - 1)`.
+- **CUME_DIST**: porcentaje acumulado. Formula: `filas con valor <= actual / total filas`.
+
+Estas funciones son utiles para detectar outliers: si un valor tiene `PERCENT_RANK > 0.95`, esta en el top 5%.
+
+---
+
+## GROUPING SETS, ROLLUP y CUBE
+
+A veces necesitas calcular subtotales y totales generales en una sola consulta. En lugar de hacer multiples `GROUP BY` y unirlos con `UNION ALL`, puedes usar `GROUPING SETS`.
+
+### GROUPING SETS: multiples agrupaciones en una consulta
+
+```sql
+-- Ventas por categoria, por estado, y total general
+SELECT
+  COALESCE(pr.categoria, 'TODAS') AS categoria,
+  COALESCE(pe.estado, 'TODOS') AS estado,
+  SUM(dp.cantidad) AS unidades,
+  ROUND(SUM(dp.cantidad * dp.precio_unitario), 2) AS ingresos
+FROM detalle_pedidos dp
+JOIN productos pr ON dp.producto_id = pr.id
+JOIN pedidos pe ON dp.pedido_id = pe.id
+GROUP BY GROUPING SETS (
+  (pr.categoria, pe.estado),   -- por categoria y estado
+  (pr.categoria),               -- subtotal por categoria
+  (pe.estado),                  -- subtotal por estado
+  ()                             -- total general
+)
+ORDER BY categoria, estado;
+```
+
+Cada tupla en `GROUPING SETS` genera un nivel de agrupacion. La tupla vacia `()` genera el total general. Las filas de subtotales tienen `NULL` en las columnas que no participan en esa agrupacion (por eso usamos `COALESCE`).
+
+### ROLLUP: jerarquia de subtotales
+
+`ROLLUP` es un atajo para crear subtotales jerarquicos. `ROLLUP(a, b)` genera los grupos `(a, b)`, `(a)` y `()`:
+
+```sql
+-- Ventas con subtotales por categoria y total general
+SELECT
+  COALESCE(pr.categoria, '** TOTAL **') AS categoria,
+  COUNT(DISTINCT pe.id) AS pedidos,
+  SUM(dp.cantidad) AS unidades,
+  ROUND(SUM(dp.cantidad * dp.precio_unitario), 2) AS ingresos
+FROM detalle_pedidos dp
+JOIN productos pr ON dp.producto_id = pr.id
+JOIN pedidos pe ON dp.pedido_id = pe.id
+GROUP BY ROLLUP(pr.categoria)
+ORDER BY ingresos DESC;
+```
+
+```
+ categoria    │ pedidos │ unidades │ ingresos
+──────────────┼─────────┼──────────┼──────────
+ ** TOTAL **  │      13 │       29 │  8454.77   ← total general
+ Electronica  │       8 │       12 │  5809.83
+ Muebles      │       4 │        5 │  1534.94
+ Accesorios   │       5 │       12 │  1110.00
+```
+
+### CUBE: todas las combinaciones
+
+`CUBE(a, b)` genera TODAS las combinaciones posibles: `(a, b)`, `(a)`, `(b)` y `()`. Es como un `GROUPING SETS` con cada subconjunto:
+
+```sql
+-- Ventas cruzadas por categoria y estado (con todos los subtotales)
+SELECT
+  COALESCE(pr.categoria, '** TOTAL **') AS categoria,
+  COALESCE(pe.estado, '** TOTAL **') AS estado,
+  SUM(dp.cantidad) AS unidades
+FROM detalle_pedidos dp
+JOIN productos pr ON dp.producto_id = pr.id
+JOIN pedidos pe ON dp.pedido_id = pe.id
+GROUP BY CUBE(pr.categoria, pe.estado)
+ORDER BY categoria, estado;
+```
+
+<Callout type="tip" title="¿Cual usar?">
+  - **GROUPING SETS**: cuando necesitas combinaciones especificas.
+  - **ROLLUP**: para reportes jerarquicos con subtotales (ventas por pais → ciudad → tienda).
+  - **CUBE**: para tablas cruzadas con todos los subtotales posibles. Mas filas, pero informacion completa.
+</Callout>
+
+---
+
+## Tablas pivote: filas a columnas
+
+Un patron comun en reportes: convertir valores de filas en columnas. SQL no tiene un `PIVOT` nativo, pero puedes lograrlo con `CASE` + agregacion:
+
+```sql
+-- Ventas por mes como columnas (tabla pivote)
+SELECT
+  c.nombre,
+  SUM(CASE WHEN EXTRACT(MONTH FROM p.fecha) = 1 THEN p.total ELSE 0 END) AS enero,
+  SUM(CASE WHEN EXTRACT(MONTH FROM p.fecha) = 2 THEN p.total ELSE 0 END) AS febrero,
+  SUM(CASE WHEN EXTRACT(MONTH FROM p.fecha) = 3 THEN p.total ELSE 0 END) AS marzo,
+  SUM(CASE WHEN EXTRACT(MONTH FROM p.fecha) = 4 THEN p.total ELSE 0 END) AS abril,
+  SUM(p.total) AS total
+FROM clientes c
+JOIN pedidos p ON c.id = p.cliente_id
+WHERE p.fecha >= '2024-01-01' AND p.fecha < '2025-01-01'
+GROUP BY c.nombre
+ORDER BY total DESC;
+```
+
+```
+ nombre          │  enero  │ febrero │  marzo  │  abril  │  total
+─────────────────┼─────────┼─────────┼─────────┼─────────┼─────────
+ Maria Garcia    │ 1389.98 │   59.99 │    0.00 │  449.99 │ 1899.96
+ Ana Martinez    │    0.00 │  499.98 │  839.98 │    0.00 │ 1339.96
+ Isabel Moreno   │    0.00 │    0.00 │    0.00 │ 1299.99 │ 1299.99
+ ...
+```
+
+### Pivote de estados de pedidos
+
+```sql
+-- Cantidad de pedidos por estado, uno por columna
+SELECT
+  c.nombre,
+  COUNT(*) FILTER (WHERE p.estado = 'completado') AS completados,
+  COUNT(*) FILTER (WHERE p.estado = 'enviado') AS enviados,
+  COUNT(*) FILTER (WHERE p.estado = 'pendiente') AS pendientes,
+  COUNT(*) AS total
+FROM clientes c
+JOIN pedidos p ON c.id = p.cliente_id
+GROUP BY c.nombre
+ORDER BY total DESC;
+```
+
+<Callout type="tip" title="FILTER vs CASE para pivotes">
+  `FILTER` es mas legible que `CASE` para pivotes en PostgreSQL. Pero si necesitas portabilidad a otros motores SQL, usa la version con `CASE`.
+</Callout>
+
+---
+
+## Patrones avanzados de analisis
+
+### Comparacion Year-over-Year (YoY)
+
+Compara datos del mismo periodo en anos diferentes:
+
+```sql
+-- Comparar ventas mensuales entre periodos
+WITH ventas_por_mes AS (
+  SELECT
+    EXTRACT(YEAR FROM fecha) AS anio,
+    EXTRACT(MONTH FROM fecha) AS mes,
+    SUM(total) AS total_ventas,
+    COUNT(*) AS num_pedidos
+  FROM pedidos
+  GROUP BY EXTRACT(YEAR FROM fecha), EXTRACT(MONTH FROM fecha)
+)
+SELECT
+  anio,
+  mes,
+  total_ventas,
+  num_pedidos,
+  LAG(total_ventas) OVER (PARTITION BY mes ORDER BY anio) AS mismo_mes_anio_anterior,
+  ROUND(
+    (total_ventas - LAG(total_ventas) OVER (PARTITION BY mes ORDER BY anio))
+    / NULLIF(LAG(total_ventas) OVER (PARTITION BY mes ORDER BY anio), 0) * 100,
+    2
+  ) AS variacion_yoy
+FROM ventas_por_mes
+ORDER BY anio, mes;
+```
+
+El truco: `PARTITION BY mes ORDER BY anio` hace que LAG compare el mismo mes en anos consecutivos.
+
+### Analisis de retencion
+
+¿Cuantos clientes que compraron en enero volvieron a comprar en los meses siguientes?
+
+```sql
+WITH primer_compra AS (
+  SELECT
+    cliente_id,
+    DATE_TRUNC('month', MIN(fecha)) AS mes_primera_compra
+  FROM pedidos
+  GROUP BY cliente_id
+),
+actividad AS (
+  SELECT DISTINCT
+    p.cliente_id,
+    pc.mes_primera_compra,
+    DATE_TRUNC('month', p.fecha) AS mes_actividad,
+    (EXTRACT(YEAR FROM DATE_TRUNC('month', p.fecha)) - EXTRACT(YEAR FROM pc.mes_primera_compra)) * 12
+    + (EXTRACT(MONTH FROM DATE_TRUNC('month', p.fecha)) - EXTRACT(MONTH FROM pc.mes_primera_compra))
+    AS meses_desde_primera
+  FROM pedidos p
+  JOIN primer_compra pc ON p.cliente_id = pc.cliente_id
+)
+SELECT
+  TO_CHAR(mes_primera_compra, 'YYYY-MM') AS cohorte,
+  meses_desde_primera,
+  COUNT(DISTINCT cliente_id) AS clientes_activos
+FROM actividad
+GROUP BY mes_primera_compra, meses_desde_primera
+ORDER BY mes_primera_compra, meses_desde_primera;
+```
+
+Este patron muestra cuantos clientes de cada cohorte (mes de primera compra) siguen activos en los meses siguientes. Es la base del analisis de retencion que usan empresas SaaS y e-commerce.
+
+### Acumulado con meta (target tracking)
+
+Compara el progreso acumulado contra una meta:
+
+```sql
+WITH ventas_diarias AS (
+  SELECT
+    fecha,
+    SUM(total) AS ventas_dia
+  FROM pedidos
+  WHERE EXTRACT(MONTH FROM fecha) = 1 AND EXTRACT(YEAR FROM fecha) = 2024
+  GROUP BY fecha
+),
+meta AS (
+  SELECT 2000.00 AS meta_mensual  -- meta de ventas del mes
+)
+SELECT
+  vd.fecha,
+  vd.ventas_dia,
+  SUM(vd.ventas_dia) OVER (ORDER BY vd.fecha) AS acumulado,
+  m.meta_mensual,
+  ROUND(SUM(vd.ventas_dia) OVER (ORDER BY vd.fecha) / m.meta_mensual * 100, 1) AS pct_meta
+FROM ventas_diarias vd
+CROSS JOIN meta m
+ORDER BY vd.fecha;
+```
 
 ---
 
@@ -747,5 +1072,63 @@ SELECT *
 FROM con_variacion
 WHERE variacion_pct < 0
 ORDER BY variacion_pct ASC;
+```
+</details>
+
+**Ejercicio 9:** Crea un reporte con ROLLUP que muestre las unidades vendidas por categoria, con un subtotal por categoria y un total general.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+  COALESCE(pr.categoria, '** TOTAL **') AS categoria,
+  SUM(dp.cantidad) AS unidades_vendidas,
+  ROUND(SUM(dp.cantidad * dp.precio_unitario), 2) AS ingresos
+FROM detalle_pedidos dp
+JOIN productos pr ON dp.producto_id = pr.id
+GROUP BY ROLLUP(pr.categoria)
+ORDER BY ingresos DESC;
+```
+</details>
+
+**Ejercicio 10:** Crea una tabla pivote que muestre para cada categoria de producto, cuantas unidades se vendieron en cada estado de pedido (completado, enviado, pendiente) como columnas separadas.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+  pr.categoria,
+  SUM(dp.cantidad) FILTER (WHERE pe.estado = 'completado') AS completados,
+  SUM(dp.cantidad) FILTER (WHERE pe.estado = 'enviado') AS enviados,
+  SUM(dp.cantidad) FILTER (WHERE pe.estado = 'pendiente') AS pendientes,
+  SUM(dp.cantidad) AS total
+FROM detalle_pedidos dp
+JOIN productos pr ON dp.producto_id = pr.id
+JOIN pedidos pe ON dp.pedido_id = pe.id
+GROUP BY pr.categoria
+ORDER BY total DESC;
+```
+</details>
+
+**Ejercicio 11 (Desafio):** Para cada empleado, muestra su nombre, salario, y en que percentil se encuentra dentro de su departamento (usa PERCENT_RANK). Ademas, muestra quien es el mejor pagado de su departamento (usa FIRST_VALUE).
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+  nombre,
+  departamento,
+  salario,
+  ROUND(PERCENT_RANK() OVER (
+    PARTITION BY departamento ORDER BY salario
+  )::NUMERIC, 2) AS percentil,
+  FIRST_VALUE(nombre) OVER (
+    PARTITION BY departamento ORDER BY salario DESC
+  ) AS mejor_pagado_depto
+FROM empleados
+ORDER BY departamento, salario DESC;
 ```
 </details>

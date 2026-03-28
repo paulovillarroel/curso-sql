@@ -10,7 +10,124 @@ Todos los ejercicios se ejecutan sobre la base de datos `tienda` creada en el **
 
 ## Basico
 
-### Ejercicio 1: Clientes sin pedidos
+Estos ejercicios integran los conceptos de los **Modulos 1 al 5**: `SELECT`, `WHERE`, `ORDER BY`, `LIMIT`, `DISTINCT`, `BETWEEN`, `LIKE`, `IN` e `IS NULL`. Solo trabajan con tablas individuales.
+
+---
+
+### Ejercicio 1: Catalogo de productos por rango de precio
+
+Lista los productos con precio entre $20 y $100. Muestra nombre, precio y categoria. Ordena por precio de mayor a menor.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT nombre, precio, categoria
+FROM productos
+WHERE precio BETWEEN 20 AND 100
+ORDER BY precio DESC;
+```
+</details>
+
+---
+
+### Ejercicio 2: Buscar empleados por nombre
+
+Encuentra todos los empleados cuyo nombre contiene la letra "a" (sin importar mayusculas/minusculas). Muestra nombre, departamento y salario. Ordena por salario de mayor a menor.
+
+<details>
+<summary>Pista</summary>
+Usa `ILIKE` para busqueda case-insensitive con el patron `%a%`.
+</details>
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT nombre, departamento, salario
+FROM empleados
+WHERE nombre ILIKE '%a%'
+ORDER BY salario DESC;
+```
+</details>
+
+---
+
+### Ejercicio 3: Clientes fuera de las ciudades principales
+
+Lista los clientes que **no** son de Santiago ni de Valparaiso. Muestra nombre, email y ciudad. Ordena alfabeticamente por nombre.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+-- Opcion 1: con NOT IN
+SELECT nombre, email, ciudad
+FROM clientes
+WHERE ciudad NOT IN ('Santiago', 'Valparaiso')
+ORDER BY nombre;
+
+-- Opcion 2: con AND
+SELECT nombre, email, ciudad
+FROM clientes
+WHERE ciudad != 'Santiago' AND ciudad != 'Valparaiso'
+ORDER BY nombre;
+```
+</details>
+
+---
+
+### Ejercicio 4: Pedidos mas caros completados
+
+Muestra los 5 pedidos con mayor total que tengan estado 'completado'. Incluye id, fecha, total y estado.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT id, fecha, total, estado
+FROM pedidos
+WHERE estado = 'completado'
+ORDER BY total DESC
+LIMIT 5;
+```
+</details>
+
+---
+
+### Ejercicio 5: Directores y ciudades unicas
+
+Resuelve estas dos consultas:
+
+**(a)** Encuentra los empleados que no tienen jefe (son directores). Muestra nombre, departamento y salario.
+
+**(b)** Lista todas las ciudades unicas donde hay clientes registrados, ordenadas alfabeticamente.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+-- (a) Empleados sin jefe
+SELECT nombre, departamento, salario
+FROM empleados
+WHERE jefe_id IS NULL;
+
+-- (b) Ciudades unicas
+SELECT DISTINCT ciudad
+FROM clientes
+ORDER BY ciudad;
+```
+</details>
+
+---
+
+## Intermedio
+
+Estos ejercicios integran conceptos de los **Modulos 1 al 9**: funciones de agregacion, `GROUP BY`, `HAVING`, `JOIN`, subconsultas, CTEs, y funciones de texto/fecha/condiciones.
+
+---
+
+### Ejercicio 6: Clientes sin pedidos
 
 Encuentra todos los clientes que **nunca** han realizado un pedido. Muestra su nombre y email.
 
@@ -47,7 +164,7 @@ La opcion 2 con NOT EXISTS suele ser la mas eficiente en tablas grandes.
 
 ---
 
-### Ejercicio 2: Productos por encima del promedio
+### Ejercicio 7: Productos por encima del promedio
 
 Lista los productos cuyo precio es mayor al precio promedio de **su misma categoria**. Muestra nombre, categoria, precio y el precio promedio de la categoria.
 
@@ -74,7 +191,7 @@ ORDER BY p.categoria, p.precio DESC;
 
 ---
 
-### Ejercicio 3: Resumen mensual de pedidos
+### Ejercicio 8: Resumen mensual de pedidos
 
 Genera un resumen de pedidos por mes del ano 2024. Muestra el mes (como numero), la cantidad de pedidos, el total facturado y el promedio por pedido. Ordena por mes.
 
@@ -96,7 +213,7 @@ ORDER BY mes;
 
 ---
 
-### Ejercicio 4: Top 5 productos mas vendidos
+### Ejercicio 9: Top 5 productos mas vendidos
 
 Encuentra los 5 productos mas vendidos (por cantidad total). Muestra el nombre del producto, la cantidad total vendida y el ingreso total generado.
 
@@ -118,7 +235,7 @@ LIMIT 5;
 
 ---
 
-### Ejercicio 5: Clientes por ciudad con filtro
+### Ejercicio 10: Clientes por ciudad con filtro
 
 Muestra las ciudades que tienen **mas de 3 clientes registrados**, junto con la cantidad de clientes en cada una. Ordena de mayor a menor.
 
@@ -136,9 +253,7 @@ ORDER BY total_clientes DESC;
 
 ---
 
-## Intermedio
-
-### Ejercicio 6: Clientes VIP
+### Ejercicio 11: Clientes VIP
 
 Un cliente VIP es aquel que ha gastado mas de $5,000 en total O ha realizado mas de 10 pedidos. Lista los clientes VIP con su nombre, cantidad de pedidos, gasto total y la razon por la cual son VIP (puede ser 'gasto alto', 'muchos pedidos' o 'ambos').
 
@@ -170,7 +285,7 @@ ORDER BY gasto_total DESC;
 
 ---
 
-### Ejercicio 7: Productos que nunca se han vendido
+### Ejercicio 12: Productos que nunca se han vendido
 
 Encuentra los productos que **no aparecen en ningun detalle de pedido**. Muestra nombre, precio y fecha de creacion. Ordena por fecha de creacion de mas antiguo a mas reciente.
 
@@ -188,7 +303,60 @@ ORDER BY p.fecha_creacion ASC;
 
 ---
 
-### Ejercicio 8: Ranking de clientes por ciudad
+### Ejercicio 13: Pedidos con muchos productos
+
+Encuentra los pedidos que contienen **mas de 5 productos diferentes**. Muestra el id del pedido, la fecha, el nombre del cliente, la cantidad de productos diferentes y el total del pedido.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+    p.id AS pedido_id,
+    p.fecha,
+    c.nombre AS cliente,
+    COUNT(DISTINCT dp.producto_id) AS productos_diferentes,
+    p.total
+FROM pedidos p
+JOIN clientes c ON p.cliente_id = c.id
+JOIN detalle_pedidos dp ON p.id = dp.pedido_id
+GROUP BY p.id, p.fecha, c.nombre, p.total
+HAVING COUNT(DISTINCT dp.producto_id) > 5
+ORDER BY productos_diferentes DESC;
+```
+</details>
+
+---
+
+### Ejercicio 14: Empleados que ganan mas que su jefe
+
+Usando la tabla `empleados` con la columna `jefe_id` (que referencia a otro empleado), encuentra los empleados que ganan mas que su jefe. Muestra el nombre del empleado, su salario, el nombre del jefe y el salario del jefe.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+    e.nombre AS empleado,
+    e.salario AS salario_empleado,
+    j.nombre AS jefe,
+    j.salario AS salario_jefe
+FROM empleados e
+JOIN empleados j ON e.jefe_id = j.id
+WHERE e.salario > j.salario
+ORDER BY (e.salario - j.salario) DESC;
+```
+</details>
+
+---
+
+## Avanzado
+
+Estos ejercicios integran **todos los conceptos del curso** (Modulos 1 al 13): window functions, CTEs recursivas, optimizacion, DML, metadatos y analisis estadistico.
+
+---
+
+### Ejercicio 15: Ranking de clientes por ciudad
 
 Para cada ciudad, muestra los 3 clientes que mas han gastado. Incluye el nombre del cliente, la ciudad y el total gastado.
 
@@ -220,32 +388,7 @@ ORDER BY ciudad, ranking;
 
 ---
 
-### Ejercicio 9: Pedidos con muchos productos
-
-Encuentra los pedidos que contienen **mas de 5 productos diferentes**. Muestra el id del pedido, la fecha, el nombre del cliente, la cantidad de productos diferentes y el total del pedido.
-
-<details>
-<summary>Ver solucion</summary>
-
-```sql
-SELECT
-    p.id AS pedido_id,
-    p.fecha,
-    c.nombre AS cliente,
-    COUNT(DISTINCT dp.producto_id) AS productos_diferentes,
-    p.total
-FROM pedidos p
-JOIN clientes c ON p.cliente_id = c.id
-JOIN detalle_pedidos dp ON p.id = dp.pedido_id
-GROUP BY p.id, p.fecha, c.nombre, p.total
-HAVING COUNT(DISTINCT dp.producto_id) > 5
-ORDER BY productos_diferentes DESC;
-```
-</details>
-
----
-
-### Ejercicio 10: Variacion de ventas mes a mes
+### Ejercicio 16: Variacion de ventas mes a mes
 
 Calcula las ventas totales por mes en 2024 y muestra la **diferencia porcentual** respecto al mes anterior. Muestra mes, total del mes, total del mes anterior y el porcentaje de cambio.
 
@@ -282,31 +425,7 @@ FROM ventas_mensuales;
 
 ---
 
-### Ejercicio 11: Empleados que ganan mas que su jefe
-
-Usando la tabla `empleados` con la columna `jefe_id` (que referencia a otro empleado), encuentra los empleados que ganan mas que su jefe. Muestra el nombre del empleado, su salario, el nombre del jefe y el salario del jefe.
-
-<details>
-<summary>Ver solucion</summary>
-
-```sql
-SELECT
-    e.nombre AS empleado,
-    e.salario AS salario_empleado,
-    j.nombre AS jefe,
-    j.salario AS salario_jefe
-FROM empleados e
-JOIN empleados j ON e.jefe_id = j.id
-WHERE e.salario > j.salario
-ORDER BY (e.salario - j.salario) DESC;
-```
-</details>
-
----
-
-## Avanzado
-
-### Ejercicio 12: Analisis de cohortes simplificado
+### Ejercicio 17: Analisis de cohortes simplificado
 
 Agrupa a los clientes por el **mes en que hicieron su primer pedido** (cohorte). Para cada cohorte, muestra cuantos clientes tiene y cuanto gastaron en total en su primer mes vs. los meses siguientes.
 
@@ -351,7 +470,7 @@ ORDER BY cohorte;
 
 ---
 
-### Ejercicio 13: Productos frecuentemente comprados juntos
+### Ejercicio 18: Productos frecuentemente comprados juntos
 
 Encuentra pares de productos que se compran juntos en el mismo pedido con frecuencia. Muestra los nombres de ambos productos y cuantas veces aparecen en el mismo pedido. Solo muestra pares que aparezcan al menos 3 veces.
 
@@ -381,7 +500,7 @@ ORDER BY veces_juntos DESC;
 
 ---
 
-### Ejercicio 14: Detectar pedidos anomalos
+### Ejercicio 19: Detectar pedidos anomalos
 
 Un pedido es "anomalo" si su total es **mas de 3 desviaciones estandar** por encima del promedio de pedidos de ese mismo cliente. Encuentra estos pedidos y muestra el id del pedido, el cliente, el total del pedido, el promedio del cliente y cuantas desviaciones estandar representa.
 
@@ -422,7 +541,7 @@ Nota: usamos `NULLIF(desviacion_cliente, 0)` para evitar division por cero en ca
 
 ---
 
-### Ejercicio 15: Dashboard de resumen completo
+### Ejercicio 20: Dashboard de resumen completo
 
 Crea una consulta que genere un resumen ejecutivo con **una sola consulta**. Debe devolver una fila con:
 - Total de clientes activos (que han hecho al menos un pedido)
@@ -494,7 +613,7 @@ CROSS JOIN ciudad_top ct;
 
 ---
 
-### Ejercicio 16: Optimiza esta consulta
+### Ejercicio 21: Optimiza esta consulta
 
 La siguiente consulta es funcional pero lenta. Reescribela para que sea mas eficiente y sugiere los indices necesarios:
 
@@ -549,7 +668,7 @@ Mejoras realizadas:
 
 ---
 
-### Ejercicio 17: Jerarquia de empleados
+### Ejercicio 22: Jerarquia de empleados
 
 Usando la tabla `empleados`, genera un reporte que muestre la jerarquia completa: para cada empleado, su nombre, el nombre de su jefe directo, y el departamento. Incluye a los empleados que no tienen jefe (son los directores). Ordena por departamento y luego por salario descendente.
 
@@ -594,7 +713,7 @@ ORDER BY cadena_jerarquia;
 
 ---
 
-### Ejercicio 18: Analisis de stock critico
+### Ejercicio 23: Analisis de stock critico
 
 Identifica los productos cuyo stock es menor que la **cantidad promedio vendida por mes** en los ultimos 6 meses. Estos productos estan en riesgo de quedarse sin inventario. Muestra el nombre, stock actual, promedio mensual de ventas y para cuantos meses alcanza el stock.
 
@@ -630,6 +749,65 @@ JOIN promedio_mensual pm ON p.id = pm.producto_id
 WHERE p.stock < pm.promedio_venta_mes
 ORDER BY meses_de_stock ASC;
 ```
+</details>
+
+---
+
+### Ejercicio 24: Migracion de estructura
+
+Este ejercicio simula una migracion de base de datos. Realiza los siguientes pasos **en orden**, usando transacciones para seguridad:
+
+1. Agrega una columna `descuento DECIMAL(5,2) DEFAULT 0` a la tabla `productos`
+2. Actualiza el descuento segun la categoria: 'Electronica' = 10%, 'Muebles' = 15%, 'Accesorios' = 5%
+3. Verifica los cambios con un SELECT
+4. Renombra la columna `descuento` a `descuento_porcentaje`
+5. Finalmente, elimina la columna (para dejar la tabla como estaba)
+
+<details>
+<summary>Pista</summary>
+Usa `BEGIN` y `COMMIT` para envolver toda la operacion en una transaccion. Si algo falla, puedes usar `ROLLBACK` para deshacer todo. Para el UPDATE por categoria, usa CASE.
+</details>
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+BEGIN;
+
+-- 1. Agregar columna
+ALTER TABLE productos
+ADD COLUMN descuento DECIMAL(5,2) DEFAULT 0;
+
+-- 2. Actualizar descuento por categoria
+UPDATE productos
+SET descuento = CASE categoria
+    WHEN 'Electronica' THEN 10.00
+    WHEN 'Muebles' THEN 15.00
+    WHEN 'Accesorios' THEN 5.00
+    ELSE 0.00
+    END;
+
+-- 3. Verificar
+SELECT nombre, categoria, precio, descuento,
+       ROUND(precio * (1 - descuento / 100), 2) AS precio_con_descuento
+FROM productos
+ORDER BY categoria, nombre;
+
+-- 4. Renombrar columna
+ALTER TABLE productos
+RENAME COLUMN descuento TO descuento_porcentaje;
+
+-- 5. Verificar el rename
+SELECT nombre, descuento_porcentaje FROM productos LIMIT 3;
+
+-- 6. Eliminar columna (dejar la tabla como estaba)
+ALTER TABLE productos
+DROP COLUMN descuento_porcentaje;
+
+COMMIT;
+```
+
+Este patron de agregar → modificar → renombrar → eliminar es comun en migraciones de bases de datos reales, donde necesitas transformar la estructura de forma segura y reversible.
 </details>
 
 ---
