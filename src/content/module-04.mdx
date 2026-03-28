@@ -1,0 +1,714 @@
+import Callout from "../components/Callout.astro"
+
+## Filtrando datos con WHERE
+
+En el modulo anterior aprendimos a pedir columnas con SELECT. Pero SELECT sin WHERE es como ir al supermercado y traer **todo** lo que hay en la tienda. En la vida real, casi siempre quieres solo una parte de los datos.
+
+La clausula **WHERE** te permite filtrar filas segun condiciones:
+
+```sql
+SELECT nombre, precio
+FROM productos
+WHERE categoria = 'Electronica';
+```
+
+Esta consulta dice: "dame el nombre y precio de los productos, pero **solo** los que tienen categoria Electronica". El resultado:
+
+```
+        nombre         |  precio
+-----------------------+---------
+ Laptop Pro 15         | 1299.99
+ Mouse Inalambrico     |   29.99
+ Teclado Mecanico      |   89.99
+ Monitor 27 pulgadas   |  449.99
+ Auriculares Bluetooth |   59.99
+ Webcam HD             |   79.99
+```
+
+De los 15 productos en la tabla, solo 6 cumplen la condicion. El WHERE descarto los otros 9 antes de que llegaran al resultado.
+
+<Callout type="performance" title="WHERE: tu mejor aliado en rendimiento">
+  WHERE es probablemente la clausula mas importante para el rendimiento de tus consultas. Filtrar filas **temprano** significa que el resto de la consulta (ordenar, agrupar, calcular) trabaja con menos datos. Si tu tabla tiene un millon de filas y el WHERE las reduce a 100, todo lo demas es 10,000 veces mas rapido. Siempre filtra lo mas posible, lo antes posible.
+</Callout>
+
+## Operadores de comparacion
+
+Los operadores basicos de comparacion son los que ya conoces de matematicas:
+
+```sql
+-- Igual a
+SELECT nombre, precio
+FROM productos
+WHERE precio = 29.99;
+
+-- Diferente de (no igual)
+SELECT nombre, estado
+FROM pedidos
+WHERE estado <> 'completado';
+
+-- Mayor que
+SELECT nombre, precio
+FROM productos
+WHERE precio > 100;
+
+-- Menor que
+SELECT nombre, salario
+FROM empleados
+WHERE salario < 45000;
+
+-- Mayor o igual que
+SELECT nombre, stock
+FROM productos
+WHERE stock >= 100;
+
+-- Menor o igual que
+SELECT nombre, precio
+FROM productos
+WHERE precio <= 50;
+```
+
+Veamos un ejemplo mas detallado. Queremos los productos que cuestan mas de $100:
+
+```sql
+SELECT nombre, precio, categoria
+FROM productos
+WHERE precio > 100;
+```
+
+```
+        nombre         |  precio  |  categoria
+-----------------------+----------+------------
+ Laptop Pro 15         | 1299.99  | Electronica
+ Monitor 27 pulgadas   |  449.99  | Electronica
+ Escritorio Ajustable  |  399.99  | Muebles
+ Silla Ergonomica      |  299.99  | Muebles
+```
+
+Los operadores de comparacion tambien funcionan con texto y fechas:
+
+```sql
+-- Clientes registrados despues de una fecha
+SELECT nombre, fecha_registro
+FROM clientes
+WHERE fecha_registro > '2024-01-01';
+
+-- Pedidos con total exacto
+SELECT id, total, estado
+FROM pedidos
+WHERE total = 89.99;
+
+-- Empleados que NO son del departamento de Ventas
+SELECT nombre, departamento
+FROM empleados
+WHERE departamento <> 'Ventas';
+```
+
+<Callout type="info" title="Comparacion de texto">
+  Cuando comparas texto con `=`, la comparacion es **exacta**. `'Santiago'` no es igual a `'santiago'` ni a `'Santiago '` (con un espacio extra). Mas adelante veremos ILIKE para busquedas mas flexibles.
+</Callout>
+
+## Operadores logicos: AND, OR, NOT
+
+¿Que pasa si necesitas combinar varias condiciones? Usas los operadores logicos.
+
+### AND: ambas condiciones deben cumplirse
+
+```sql
+-- Productos de Electronica que cuesten menos de $100
+SELECT nombre, precio, categoria
+FROM productos
+WHERE categoria = 'Electronica'
+  AND precio < 100;
+```
+
+```
+        nombre         | precio | categoria
+-----------------------+--------+------------
+ Mouse Inalambrico     |  29.99 | Electronica
+ Teclado Mecanico      |  89.99 | Electronica
+ Auriculares Bluetooth |  59.99 | Electronica
+ Webcam HD             |  79.99 | Electronica
+```
+
+Ambas condiciones deben ser verdaderas: el producto tiene que ser de Electronica **y** costar menos de 100.
+
+```sql
+-- Empleados de Tecnologia con salario mayor a 55000
+SELECT nombre, departamento, salario
+FROM empleados
+WHERE departamento = 'Tecnologia'
+  AND salario > 55000;
+```
+
+```
+       nombre        | departamento | salario
+---------------------+--------------+---------
+ Miguel Angel Torres | Tecnologia   | 62000
+ Alejandro Vega      | Tecnologia   | 58000
+```
+
+### OR: al menos una condicion debe cumplirse
+
+```sql
+-- Productos que sean de Electronica O de Muebles
+SELECT nombre, precio, categoria
+FROM productos
+WHERE categoria = 'Electronica'
+   OR categoria = 'Muebles';
+```
+
+Esto devuelve los productos que cumplan **cualquiera** de las dos condiciones: si es de Electronica, entra. Si es de Muebles, tambien entra.
+
+```sql
+-- Pedidos que esten pendientes o enviados
+SELECT id, fecha, total, estado
+FROM pedidos
+WHERE estado = 'pendiente'
+   OR estado = 'enviado';
+```
+
+```
+ id |   fecha    |  total  |  estado
+----+------------+---------+-----------
+  5 | 2024-02-28 | 1749.98 | enviado
+  7 | 2024-03-10 |  299.99 | pendiente
+  8 | 2024-03-15 |  839.98 | enviado
+ 10 | 2024-03-25 |  479.98 | pendiente
+ 12 | 2024-04-05 | 1299.99 | enviado
+ 13 | 2024-04-10 |   69.98 | pendiente
+```
+
+### NOT: invierte la condicion
+
+```sql
+-- Productos que NO son de Electronica
+SELECT nombre, categoria
+FROM productos
+WHERE NOT categoria = 'Electronica';
+-- Equivalente a: WHERE categoria <> 'Electronica'
+```
+
+NOT es mas util cuando lo combinas con otros operadores como IN, BETWEEN o LIKE, que veremos en un momento.
+
+### Precedencia: AND antes que OR
+
+Aqui viene un error clasico que atrapa a muchos principiantes. AND tiene **mayor precedencia** que OR, igual que la multiplicacion tiene mayor precedencia que la suma en matematicas.
+
+```sql
+-- CUIDADO: ¿que hace realmente esta consulta?
+SELECT nombre, precio, categoria
+FROM productos
+WHERE categoria = 'Electronica'
+   OR categoria = 'Muebles'
+  AND precio < 50;
+```
+
+Esto NO dice "productos de Electronica o Muebles que cuesten menos de 50". Lo que realmente dice es:
+
+```sql
+-- Asi lo interpreta la base de datos:
+WHERE categoria = 'Electronica'
+   OR (categoria = 'Muebles' AND precio < 50)
+```
+
+Es decir: "dame TODOS los de Electronica (sin importar precio) O los de Muebles que cuesten menos de 50". El AND se evalua primero y solo se aplica a Muebles.
+
+La solucion: **usa parentesis** para ser explicito:
+
+```sql
+-- Esto SI hace lo que quieres:
+SELECT nombre, precio, categoria
+FROM productos
+WHERE (categoria = 'Electronica' OR categoria = 'Muebles')
+  AND precio < 50;
+```
+
+```
+      nombre       | precio | categoria
+-------------------+--------+------------
+ Mouse Inalambrico |  29.99 | Electronica
+ Lampara LED       |  34.99 | Muebles
+ Soporte Monitor   |  44.99 | Muebles
+```
+
+<Callout type="warning" title="Siempre usa parentesis">
+  Cuando combines AND y OR en la misma consulta, **siempre** usa parentesis. Incluso si recuerdas las reglas de precedencia, los parentesis hacen que tu intencion sea clara para cualquier persona que lea la consulta (incluyendo tu yo del futuro).
+</Callout>
+
+## BETWEEN: rangos de valores
+
+BETWEEN es un atajo elegante para filtrar por un rango (incluyendo los extremos):
+
+```sql
+-- Productos entre $30 y $100 (incluye 30 y 100)
+SELECT nombre, precio
+FROM productos
+WHERE precio BETWEEN 30 AND 100;
+```
+
+```
+        nombre         | precio
+-----------------------+--------
+ Teclado Mecanico      |  89.99
+ Auriculares Bluetooth |  59.99
+ Lampara LED           |  34.99
+ Mochila para Laptop   |  49.99
+ Hub USB-C             |  39.99
+ Webcam HD             |  79.99
+ Soporte Monitor       |  44.99
+```
+
+Es equivalente a escribir:
+
+```sql
+WHERE precio >= 30 AND precio <= 100
+```
+
+Pero BETWEEN es mas legible. Funciona tambien con fechas:
+
+```sql
+-- Pedidos realizados en febrero 2024
+SELECT id, cliente_id, fecha, total
+FROM pedidos
+WHERE fecha BETWEEN '2024-02-01' AND '2024-02-28';
+```
+
+```
+ id | cliente_id |   fecha    |  total
+----+------------+------------+---------
+  3 | 3          | 2024-02-01 |  499.98
+  4 | 1          | 2024-02-14 |   59.99
+  5 | 4          | 2024-02-28 | 1749.98
+```
+
+```sql
+-- Empleados con salario entre 40000 y 60000
+SELECT nombre, departamento, salario
+FROM empleados
+WHERE salario BETWEEN 40000 AND 60000;
+```
+
+Y puedes invertirlo con NOT:
+
+```sql
+-- Productos que NO cuestan entre 30 y 100
+SELECT nombre, precio
+FROM productos
+WHERE precio NOT BETWEEN 30 AND 100;
+```
+
+<Callout type="info" title="BETWEEN incluye los extremos">
+  `BETWEEN 30 AND 100` incluye tanto 30 como 100. Si necesitas excluir los extremos, usa operadores de comparacion: `WHERE precio > 30 AND precio < 100`.
+</Callout>
+
+## IN: listas de valores
+
+Cuando necesitas comparar contra varios valores posibles, IN es mucho mas limpio que encadenar varios OR:
+
+```sql
+-- Sin IN (funciona pero es verboso)
+SELECT nombre, ciudad
+FROM clientes
+WHERE ciudad = 'Santiago'
+   OR ciudad = 'Valparaiso'
+   OR ciudad = 'Concepcion';
+
+-- Con IN (mismo resultado, mucho mas limpio)
+SELECT nombre, ciudad
+FROM clientes
+WHERE ciudad IN ('Santiago', 'Valparaiso', 'Concepcion');
+```
+
+```
+     nombre      |   ciudad
+-----------------+------------
+ Maria Garcia    | Santiago
+ Carlos Lopez    | Valparaiso
+ Ana Martinez    | Santiago
+ Pedro Sanchez   | Concepcion
+ Laura Torres    | Santiago
+ Diego Rivera    | Valparaiso
+ Roberto Diaz    | Santiago
+ Andres Vargas   | Concepcion
+```
+
+IN funciona con cualquier tipo de dato:
+
+```sql
+-- Productos de ciertas categorias
+SELECT nombre, categoria, precio
+FROM productos
+WHERE categoria IN ('Electronica', 'Accesorios');
+
+-- Pedidos especificos por ID
+SELECT id, total, estado
+FROM pedidos
+WHERE id IN (1, 5, 10, 15);
+
+-- Pedidos que no estan completados ni enviados
+SELECT id, total, estado
+FROM pedidos
+WHERE estado NOT IN ('completado', 'enviado');
+```
+
+<Callout type="tip" title="IN vs OR: mismo resultado">
+  `WHERE ciudad IN ('Santiago', 'Valparaiso')` produce exactamente el mismo resultado que `WHERE ciudad = 'Santiago' OR ciudad = 'Valparaiso'`. Internamente PostgreSQL puede incluso convertir uno al otro. La ventaja de IN es puramente de legibilidad, especialmente con listas largas.
+</Callout>
+
+## LIKE e ILIKE: busqueda por patrones
+
+A veces no sabes el valor exacto que buscas. LIKE te permite buscar usando **patrones** con dos caracteres especiales:
+
+- **`%`** representa cualquier cantidad de caracteres (cero o mas)
+- **`_`** representa exactamente un caracter
+
+```sql
+-- Productos cuyo nombre empieza con "M"
+SELECT nombre
+FROM productos
+WHERE nombre LIKE 'M%';
+```
+
+```
+      nombre
+-------------------
+ Mouse Inalambrico
+ Monitor 27 pulgadas
+ Mochila para Laptop
+ Mousepad XL
+```
+
+```sql
+-- Productos cuyo nombre termina en "o"
+SELECT nombre
+FROM productos
+WHERE nombre LIKE '%o';
+```
+
+```
+       nombre
+-------------------
+ Mouse Inalambrico
+ Teclado Mecanico
+```
+
+```sql
+-- Productos que contienen "USB" en el nombre
+SELECT nombre
+FROM productos
+WHERE nombre LIKE '%USB%';
+```
+
+```
+   nombre
+-----------
+ Hub USB-C
+```
+
+```sql
+-- Emails que contienen un texto especifico
+SELECT nombre, email
+FROM clientes
+WHERE email LIKE '%@email.com';
+```
+
+El guion bajo (`_`) es para un solo caracter:
+
+```sql
+-- Nombres de exactamente 4 letras (patron: 4 guiones bajos)
+-- Esto buscaria nombres de exactamente 4 caracteres
+SELECT nombre
+FROM clientes
+WHERE nombre LIKE '____';
+```
+
+### ILIKE: busqueda sin importar mayusculas/minusculas
+
+LIKE es sensible a mayusculas. Si buscas `LIKE 'laptop%'`, no encontrara "Laptop Pro 15". Para buscar sin distinguir mayusculas, PostgreSQL tiene **ILIKE**:
+
+```sql
+-- LIKE: sensible a mayusculas (no encuentra nada)
+SELECT nombre
+FROM productos
+WHERE nombre LIKE 'laptop%';
+-- Resultado: 0 filas
+
+-- ILIKE: ignora mayusculas/minusculas
+SELECT nombre
+FROM productos
+WHERE nombre ILIKE 'laptop%';
+-- Resultado: Laptop Pro 15
+```
+
+```sql
+-- Buscar clientes cuyo nombre contiene "garcia" (sin importar mayusculas)
+SELECT nombre, email
+FROM clientes
+WHERE nombre ILIKE '%garcia%';
+```
+
+```
+    nombre     |     email
+---------------+----------------
+ Maria Garcia  | maria@email.com
+```
+
+<Callout type="warning" title="ILIKE es exclusivo de PostgreSQL">
+  ILIKE no existe en el estandar SQL ni en otros motores como MySQL o SQL Server. Es una extension de PostgreSQL. En otros motores se logra de forma distinta (por ejemplo, MySQL compara texto sin distinguir mayusculas por defecto).
+</Callout>
+
+<Callout type="performance" title="LIKE y el uso de indices">
+  Cuando usas LIKE con un patron que **empieza con %** (como `'%laptop%'`), la base de datos no puede usar un indice y tiene que revisar **todas** las filas de la tabla. Esto es lo que llamamos un **full table scan**.
+
+  En cambio, si el patron empieza con texto fijo (como `'Laptop%'`), PostgreSQL puede usar un indice para saltar directamente a las filas que empiezan con "Laptop", lo cual es mucho mas rapido.
+
+  Regla general: `LIKE 'texto%'` puede ser rapido con un indice. `LIKE '%texto%'` siempre revisa toda la tabla.
+</Callout>
+
+## IS NULL / IS NOT NULL
+
+En bases de datos, **NULL** es un valor especial que significa "no hay dato" o "desconocido". No es lo mismo que cero, no es lo mismo que una cadena vacia, y no es lo mismo que false. Es la **ausencia de valor**.
+
+Un detalle importante: **no puedes comparar con NULL usando `=`**. Tienes que usar IS NULL o IS NOT NULL:
+
+```sql
+-- INCORRECTO: esto no funciona como esperas
+SELECT nombre
+FROM empleados
+WHERE jefe_id = NULL;
+-- Resultado: 0 filas (siempre, incluso si hay NULLs)
+
+-- CORRECTO: usa IS NULL
+SELECT nombre
+FROM empleados
+WHERE jefe_id IS NULL;
+-- Resultado: Sofia Mendez (la gerente, no tiene jefe)
+```
+
+¿Por que `= NULL` no funciona? Porque en SQL, cualquier comparacion con NULL devuelve NULL (ni verdadero ni falso). Es como preguntar "¿es lo desconocido igual a lo desconocido?" La respuesta es: no se sabe.
+
+```sql
+-- Empleados que SI tienen jefe
+SELECT nombre, jefe_id
+FROM empleados
+WHERE jefe_id IS NOT NULL;
+```
+
+```
+       nombre        | jefe_id
+---------------------+---------
+ Juan Perez          |       1
+ Valentina Castro    |       1
+ Miguel Angel Torres |       1
+ Camila Rojas        |       4
+ Alejandro Vega      |       4
+ Fernanda Luna       |       2
+ Ricardo Soto        |       4
+ Patricia Herrera    |       8
+ Daniela Flores      |       2
+```
+
+<Callout type="warning" title="La trampa del NULL">
+  Este es uno de los errores mas comunes en SQL. Recuerda estas reglas:
+
+  - `NULL = NULL` devuelve NULL (no TRUE)
+  - `NULL <> NULL` devuelve NULL (no TRUE)
+  - `NULL > 5` devuelve NULL
+  - Para verificar NULL, **siempre** usa `IS NULL` o `IS NOT NULL`
+</Callout>
+
+## Combinando todo
+
+Ahora que conoces todas las herramientas de filtrado, puedes combinarlas para hacer consultas precisas:
+
+```sql
+-- Productos de Electronica entre $50 y $500 con stock mayor a 30
+SELECT nombre, precio, stock
+FROM productos
+WHERE categoria = 'Electronica'
+  AND precio BETWEEN 50 AND 500
+  AND stock > 30;
+```
+
+```
+        nombre         | precio | stock
+-----------------------+--------+-------
+ Teclado Mecanico      |  89.99 |    80
+ Auriculares Bluetooth |  59.99 |   200
+ Webcam HD             |  79.99 |    60
+```
+
+```sql
+-- Clientes de Santiago o Valparaiso cuyos nombres empiezan con 'C' o 'M'
+SELECT nombre, ciudad, email
+FROM clientes
+WHERE ciudad IN ('Santiago', 'Valparaiso')
+  AND (nombre LIKE 'C%' OR nombre LIKE 'M%');
+```
+
+```
+     nombre      |   ciudad    |      email
+-----------------+-------------+----------------
+ Maria Garcia    | Santiago    | maria@email.com
+ Carlos Lopez    | Valparaiso  | carlos@email.com
+```
+
+```sql
+-- Pedidos completados de mas de $100 en el primer trimestre de 2024
+SELECT id, cliente_id, fecha, total
+FROM pedidos
+WHERE estado = 'completado'
+  AND total > 100
+  AND fecha BETWEEN '2024-01-01' AND '2024-03-31';
+```
+
+```sql
+-- Empleados que no son de Ventas ni de Soporte y ganan mas de 50000
+SELECT nombre, departamento, salario
+FROM empleados
+WHERE departamento NOT IN ('Ventas', 'Soporte')
+  AND salario > 50000;
+```
+
+<Callout type="performance" title="Filtrar temprano, filtrar mucho">
+  Imagina una tabla con 10 millones de filas. Si tu WHERE reduce eso a 1000 filas, cualquier operacion posterior (ordenar, agrupar, hacer JOINs) trabaja con 1000 filas en vez de 10 millones.
+
+  Conceptualmente, una consulta **sin WHERE** sobre una tabla de N filas tiene que procesar las N filas completas. Un WHERE con una condicion sobre una columna **indexada** puede encontrar las filas relevantes en tiempo logaritmico, es decir O(log N) en vez de O(N). Veremos indices mas adelante, pero la leccion por ahora es: **cada condicion en WHERE que reduce filas mejora el rendimiento de toda la consulta**.
+</Callout>
+
+## Resumen de operadores
+
+Aqui tienes una referencia rapida de todo lo que vimos:
+
+| Operador | Descripcion | Ejemplo |
+|---|---|---|
+| `=` | Igual a | `WHERE precio = 29.99` |
+| `<>` o `!=` | Diferente de | `WHERE estado <> 'pendiente'` |
+| `>` | Mayor que | `WHERE precio > 100` |
+| `<` | Menor que | `WHERE stock < 50` |
+| `>=` | Mayor o igual | `WHERE salario >= 45000` |
+| `<=` | Menor o igual | `WHERE precio <= 50` |
+| `AND` | Ambas condiciones | `WHERE precio > 10 AND stock > 0` |
+| `OR` | Al menos una condicion | `WHERE ciudad = 'Santiago' OR ciudad = 'Temuco'` |
+| `NOT` | Invierte la condicion | `WHERE NOT categoria = 'Muebles'` |
+| `BETWEEN` | Rango inclusivo | `WHERE precio BETWEEN 10 AND 100` |
+| `IN` | Lista de valores | `WHERE ciudad IN ('Santiago', 'Temuco')` |
+| `LIKE` | Patron (sensible a mayusculas) | `WHERE nombre LIKE 'M%'` |
+| `ILIKE` | Patron (sin distinguir mayusculas) | `WHERE nombre ILIKE '%laptop%'` |
+| `IS NULL` | Es nulo | `WHERE jefe_id IS NULL` |
+| `IS NOT NULL` | No es nulo | `WHERE email IS NOT NULL` |
+
+---
+
+### Ejercicios
+
+**Ejercicio 1**: Encuentra todos los productos que cuestan menos de $50.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT nombre, precio
+FROM productos
+WHERE precio < 50;
+```
+</details>
+
+**Ejercicio 2**: Muestra los pedidos con estado 'enviado' que tengan un total mayor a $500.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT id, cliente_id, fecha, total, estado
+FROM pedidos
+WHERE estado = 'enviado'
+  AND total > 500;
+```
+</details>
+
+**Ejercicio 3**: Encuentra todos los clientes que NO viven en Santiago.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT nombre, ciudad
+FROM clientes
+WHERE ciudad <> 'Santiago';
+-- Tambien valido: WHERE NOT ciudad = 'Santiago'
+-- Tambien valido: WHERE ciudad NOT IN ('Santiago')
+```
+</details>
+
+**Ejercicio 4**: Busca los productos cuyo nombre contiene la palabra "Monitor" (sin importar mayusculas o minusculas).
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT nombre, precio, categoria
+FROM productos
+WHERE nombre ILIKE '%monitor%';
+```
+</details>
+
+**Ejercicio 5**: Encuentra empleados del departamento de Tecnologia o Ventas que ganen entre 40000 y 60000.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT nombre, departamento, salario
+FROM empleados
+WHERE departamento IN ('Tecnologia', 'Ventas')
+  AND salario BETWEEN 40000 AND 60000;
+```
+</details>
+
+**Ejercicio 6**: Muestra los pedidos realizados en marzo de 2024 que esten pendientes o enviados.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT id, cliente_id, fecha, total, estado
+FROM pedidos
+WHERE fecha BETWEEN '2024-03-01' AND '2024-03-31'
+  AND estado IN ('pendiente', 'enviado');
+```
+</details>
+
+**Ejercicio 7**: Encuentra al empleado (o empleados) que no tiene jefe. ¿Que cargo crees que tiene esa persona?
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT nombre, departamento, salario
+FROM empleados
+WHERE jefe_id IS NULL;
+-- Resultado: Sofia Mendez, del departamento Gerencia.
+-- Es la gerente general, la unica sin jefe.
+```
+</details>
+
+**Ejercicio 8 (desafio)**: Escribe una consulta que encuentre productos de la categoria 'Accesorios' que cuesten menos de $30 O productos de cualquier categoria con stock mayor a 200. Asegurate de que los parentesis esten correctos.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT nombre, precio, categoria, stock
+FROM productos
+WHERE (categoria = 'Accesorios' AND precio < 30)
+   OR stock > 200;
+```
+
+Los parentesis son clave aqui. Sin ellos, el AND se evaluaria primero y el resultado seria diferente. Los productos que cumplen son:
+- Cable HDMI 2m ($12.99, Accesorios) - cumple la primera condicion
+- Mousepad XL ($19.99, Accesorios) - cumple la primera condicion
+- Cargador Rapido ($24.99, Accesorios) - cumple la primera condicion
+- Cable HDMI 2m tambien cumple la segunda (stock: 300)
+- Cargador Rapido tambien cumple la segunda (stock: 250)
+</details>

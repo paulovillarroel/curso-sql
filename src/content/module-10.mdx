@@ -1,0 +1,374 @@
+import Callout from "../components/Callout.astro"
+import CommandTable from "../components/CommandTable.astro"
+
+Hasta ahora nos enfocamos en **leer** datos con `SELECT`. Pero en la vida real tambien necesitas **agregar**, **modificar** y **eliminar** datos. Estos son los comandos DML (Data Manipulation Language): `INSERT`, `UPDATE` y `DELETE`.
+
+Este curso se enfoca en consultas, asi que vamos a ser concisos. Pero es fundamental que conozcas estas operaciones y, sobre todo, que aprendas a usarlas **de forma segura**.
+
+<Callout type="warning" title="Este modulo modifica datos">
+  Los ejemplos y ejercicios de este modulo **insertan, modifican y eliminan** filas de tu base de datos. Para experimentar con seguridad, usa transacciones: ejecuta `BEGIN;` antes de cada ejemplo y `ROLLBACK;` si quieres deshacer los cambios. Si en algun momento tu base queda en un estado raro, vuelve a ejecutar el script `db/init.sql` del Modulo 2 para resetearla.
+</Callout>
+
+---
+
+### INSERT: agregando datos
+
+#### Insertar una sola fila
+
+La sintaxis basica:
+
+```sql
+INSERT INTO productos (nombre, precio, categoria, stock, fecha_creacion)
+VALUES ('Teclado Mecanico', 89.99, 'Perifericos', 25, CURRENT_DATE);
+```
+
+<Callout type="info">
+La columna `id` no la incluimos porque es `SERIAL` (auto-incremental). PostgreSQL le asigna el siguiente valor automaticamente.
+</Callout>
+
+#### Insertar multiples filas
+
+En lugar de ejecutar un INSERT por cada fila, podes insertar varias de una vez:
+
+```sql
+INSERT INTO productos (nombre, precio, categoria, stock, fecha_creacion)
+VALUES
+    ('Mouse Inalambrico', 35.50, 'Perifericos', 100, CURRENT_DATE),
+    ('Monitor 27 pulgadas', 299.99, 'Monitores', 15, CURRENT_DATE),
+    ('Cable HDMI 2m', 12.99, 'Cables', 200, CURRENT_DATE);
+```
+
+<Callout type="performance" title="Inserciones en bulk">
+Insertar 1000 filas con un solo `INSERT ... VALUES (...)` de multiples filas es **muchisimo mas rapido** que ejecutar 1000 sentencias `INSERT` individuales. Cada INSERT individual tiene overhead de red, parsing y transaccion. Un INSERT masivo hace todo de una vez.
+
+Para volumenes muy grandes (millones de filas), investiga el comando `COPY` de PostgreSQL, que es aun mas rapido que INSERT masivo.
+</Callout>
+
+#### INSERT con SELECT (copiar datos)
+
+Podes insertar datos que vienen del resultado de una consulta. Primero creamos una tabla destino:
+
+```sql
+-- Crear una tabla para productos premium
+CREATE TABLE productos_premium (
+    id SERIAL PRIMARY KEY,
+    nombre VARCHAR(100),
+    precio DECIMAL(10,2),
+    categoria VARCHAR(50)
+);
+
+-- Copiar productos con precio mayor a 100
+INSERT INTO productos_premium (nombre, precio, categoria)
+SELECT nombre, precio, categoria
+FROM productos
+WHERE precio > 100;
+```
+
+Esto es muy util para crear tablas de resumen, copiar datos entre tablas, o poblar tablas temporales.
+
+#### INSERT con RETURNING
+
+Una funcionalidad muy util de PostgreSQL: podes obtener los datos insertados de vuelta, incluyendo los valores generados automaticamente como el `id`.
+
+```sql
+INSERT INTO clientes (nombre, email, ciudad, fecha_registro)
+VALUES ('Felipe Rojas', 'felipe@email.com', 'Santiago', CURRENT_DATE)
+RETURNING id, nombre;
+```
+
+Esto devuelve:
+
+```
+ id |     nombre
+----+--------------
+ 11 | Felipe Rojas
+```
+
+Muy practico cuando necesitas el `id` recien generado para usarlo en otra operacion (por ejemplo, crear un pedido para ese cliente).
+
+```sql
+-- Tambien funciona para devolver todas las columnas
+INSERT INTO productos (nombre, precio, categoria, stock, fecha_creacion)
+VALUES ('Parlante Portatil', 49.99, 'Electronica', 30, CURRENT_DATE)
+RETURNING *;
+```
+
+---
+
+### UPDATE: modificando datos
+
+#### Sintaxis basica
+
+```sql
+UPDATE productos
+SET precio = 79.99
+WHERE id = 5;
+```
+
+Podes actualizar varias columnas a la vez:
+
+```sql
+UPDATE productos
+SET precio = 79.99,
+    stock = stock - 1,
+    nombre = 'Teclado Mecanico RGB'
+WHERE id = 5;
+```
+
+<Callout type="warning" title="SIEMPRE usa WHERE con UPDATE">
+Un `UPDATE` sin `WHERE` modifica **TODAS las filas** de la tabla. Esto es casi siempre un error catastrofico:
+
+```sql
+-- PELIGRO: esto cambia el precio de TODOS los productos!
+UPDATE productos SET precio = 0;
+
+-- CORRECTO: solo cambia un producto especifico
+UPDATE productos SET precio = 0 WHERE id = 42;
+```
+
+Antes de ejecutar un `UPDATE`, siempre preguntate: "cuantas filas va a afectar esto?"
+</Callout>
+
+#### UPDATE con expresiones
+
+Podes usar expresiones y calculos en el `SET`:
+
+```sql
+-- Aumentar todos los precios un 10%
+UPDATE productos
+SET precio = ROUND(precio * 1.10, 2)
+WHERE categoria = 'Electronica';
+
+-- Reabastecer productos con stock bajo
+UPDATE productos
+SET stock = stock + 50
+WHERE stock < 10;
+```
+
+#### UPDATE con subconsultas
+
+Podes usar subconsultas para calcular el nuevo valor:
+
+```sql
+-- Igualar el precio al promedio de su categoria
+UPDATE productos p
+SET precio = (
+    SELECT ROUND(AVG(precio), 2)
+    FROM productos
+    WHERE categoria = p.categoria
+)
+WHERE precio < 10;
+```
+
+#### UPDATE con FROM (JOIN)
+
+PostgreSQL permite usar `FROM` en un UPDATE para hacer JOINs, algo que no todos los motores soportan:
+
+```sql
+-- Marcar como completados los pedidos pendientes de clientes de Santiago
+UPDATE pedidos
+SET estado = 'completado'
+FROM clientes
+WHERE pedidos.cliente_id = clientes.id
+  AND clientes.ciudad = 'Santiago'
+  AND pedidos.estado = 'pendiente';
+```
+
+#### UPDATE con RETURNING
+
+Al igual que INSERT, UPDATE tambien soporta `RETURNING`:
+
+```sql
+UPDATE productos
+SET precio = ROUND(precio * 0.90, 2)
+WHERE categoria = 'Accesorios'
+RETURNING id, nombre, precio;
+```
+
+Esto te muestra exactamente que filas fueron actualizadas y con que valores.
+
+---
+
+### DELETE: eliminando datos
+
+#### Sintaxis basica
+
+```sql
+DELETE FROM productos
+WHERE id = 42;
+```
+
+<Callout type="warning" title="SIEMPRE usa WHERE con DELETE">
+Igual que con UPDATE, un `DELETE` sin `WHERE` elimina **TODAS las filas** de la tabla:
+
+```sql
+-- PELIGRO: esto borra TODOS los productos!
+DELETE FROM productos;
+
+-- CORRECTO: solo borra productos sin stock
+DELETE FROM productos WHERE stock = 0;
+```
+
+No hay "Ctrl+Z" en SQL. Una vez que eliminas datos, se fueron (a menos que estes en una transaccion que puedas revertir).
+</Callout>
+
+#### DELETE con subconsultas
+
+```sql
+-- Eliminar pedidos de clientes que ya no existen
+DELETE FROM pedidos
+WHERE cliente_id NOT IN (
+    SELECT id FROM clientes
+);
+
+-- Mejor con NOT EXISTS (mas seguro con NULLs)
+DELETE FROM pedidos p
+WHERE NOT EXISTS (
+    SELECT 1 FROM clientes c WHERE c.id = p.cliente_id
+);
+```
+
+#### DELETE con RETURNING
+
+```sql
+DELETE FROM productos
+WHERE stock = 0 AND fecha_creacion < CURRENT_DATE - INTERVAL '1 year'
+RETURNING id, nombre;
+```
+
+Esto te muestra que datos eliminaste, util para llevar un log o confirmar la operacion.
+
+---
+
+### TRUNCATE vs DELETE
+
+Si necesitas **vaciar una tabla completa**, `TRUNCATE` es mucho mas eficiente que `DELETE`:
+
+```sql
+-- Lento: recorre fila por fila, genera logs por cada una
+DELETE FROM logs_temporales;
+
+-- Rapido: elimina todas las filas de golpe
+TRUNCATE TABLE logs_temporales;
+```
+
+<CommandTable commands={[
+  { command: "Velocidad", description: "DELETE es lento (fila por fila). TRUNCATE es instantaneo." },
+  { command: "Se puede filtrar?", description: "DELETE acepta WHERE. TRUNCATE no." },
+  { command: "Dispara triggers?", description: "DELETE si. TRUNCATE no (por defecto)." },
+  { command: "Se puede revertir?", description: "Ambos se pueden revertir dentro de una transaccion." },
+  { command: "Reinicia secuencias?", description: "DELETE no. TRUNCATE puede con RESTART IDENTITY." },
+]} />
+
+```sql
+-- Truncar y reiniciar el contador de IDs
+TRUNCATE TABLE logs_temporales RESTART IDENTITY;
+```
+
+---
+
+### Rendimiento y seguridad
+
+<Callout type="performance" title="UPDATE/DELETE sin WHERE = desastre de rendimiento">
+Un `UPDATE` o `DELETE` sin `WHERE` hace un **full table scan** y modifica cada fila. En una tabla con millones de filas, esto puede tomar minutos u horas, bloquear otras consultas y llenar el log de transacciones. Siempre verifica tu `WHERE`.
+</Callout>
+
+<Callout type="tip" title="La regla de oro: SELECT antes de UPDATE/DELETE">
+**Antes de ejecutar cualquier UPDATE o DELETE**, primero ejecuta la misma consulta como SELECT para verificar que afecta las filas correctas:
+
+```sql
+-- Paso 1: verificar que vamos a modificar
+SELECT id, nombre, precio FROM productos
+WHERE precio < 20;
+-- Resultado: ver cuantas filas y cuales son. OK, es lo que esperaba.
+
+-- Paso 2: ahora si, ejecutar el DELETE
+DELETE FROM productos
+WHERE precio < 20;
+-- DELETE N (confirma cuantas filas se borraron)
+```
+
+Este habito te va a salvar de errores costosos. Todos hemos escuchado (o vivido) historias de un `DELETE` que borro la tabla entera de produccion.
+</Callout>
+
+Otro consejo practico: usa transacciones cuando hagas operaciones peligrosas:
+
+```sql
+BEGIN;  -- Iniciar transaccion
+
+DELETE FROM pedidos WHERE estado = 'pendiente' AND fecha < '2024-06-01';
+-- Verificar cuantas filas se borraron...
+-- Si algo salio mal:
+-- ROLLBACK;
+
+-- Si todo esta bien:
+COMMIT;
+```
+
+---
+
+### Ejercicios
+
+**Ejercicio 1:** Inserta 3 nuevos productos en la tabla `productos` usando un solo INSERT. Usa `RETURNING` para ver los IDs generados.
+
+```sql
+INSERT INTO productos (nombre, precio, categoria, stock, fecha_creacion)
+VALUES
+    ('Adaptador DisplayPort', 18.99, 'Accesorios', 60, CURRENT_DATE),
+    ('Reposamuñecas Gel', 22.50, 'Accesorios', 80, CURRENT_DATE),
+    ('Parlante Portatil', 65.00, 'Electronica', 35, CURRENT_DATE)
+RETURNING id, nombre, precio;
+```
+
+**Ejercicio 2:** Aumenta un 15% el precio de todos los productos de la categoria 'Electronica'. Muestra los productos afectados con RETURNING.
+
+```sql
+UPDATE productos
+SET precio = ROUND(precio * 1.15, 2)
+WHERE categoria = 'Electronica'
+RETURNING id, nombre, precio;
+```
+
+**Ejercicio 3:** Escribe el SELECT que usarias para verificar antes de eliminar todos los pedidos pendientes anteriores a marzo 2024. Luego escribe el DELETE correspondiente.
+
+```sql
+-- Paso 1: verificar
+SELECT id, cliente_id, fecha, estado
+FROM pedidos
+WHERE estado = 'pendiente' AND fecha < '2024-03-01';
+
+-- Paso 2: eliminar (solo despues de verificar)
+DELETE FROM pedidos
+WHERE estado = 'pendiente' AND fecha < '2024-03-01'
+RETURNING id;
+```
+
+**Ejercicio 4:** Usa UPDATE para marcar como 'completado' todos los pedidos con estado 'enviado' cuyo total supere el promedio. (Primero escribe el SELECT de verificacion).
+
+```sql
+-- Verificacion
+SELECT p.id, p.total, p.estado
+FROM pedidos p
+WHERE p.estado = 'enviado'
+  AND p.total > (SELECT AVG(total) FROM pedidos);
+
+-- Update
+UPDATE pedidos
+SET estado = 'completado'
+WHERE estado = 'enviado'
+  AND total > (SELECT AVG(total) FROM pedidos)
+RETURNING id, total, estado;
+```
+
+**Ejercicio 5:** Inserta en la tabla `pedidos` un nuevo pedido para el cliente con email 'maria@email.com', usando una subconsulta para obtener su `id`.
+
+```sql
+INSERT INTO pedidos (cliente_id, fecha, total, estado)
+VALUES (
+    (SELECT id FROM clientes WHERE email = 'maria@email.com'),
+    CURRENT_DATE,
+    0,
+    'pendiente'
+)
+RETURNING *;
+```

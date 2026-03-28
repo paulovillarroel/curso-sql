@@ -1,0 +1,455 @@
+import Callout from "../components/Callout.astro"
+import CommandTable from "../components/CommandTable.astro"
+
+Hasta ahora, todas nuestras consultas han sido "planas": un solo `SELECT` que lee de una o varias tablas. Pero SQL es mucho mas poderoso que eso. Podemos **anidar consultas dentro de otras consultas**. A esto le llamamos **subconsultas** (o subqueries).
+
+Y cuando las subconsultas se vuelven complicadas de leer, tenemos una herramienta elegante: las **CTEs** (Common Table Expressions), que nos permiten escribir consultas complejas de forma clara y organizada.
+
+---
+
+### Que es una subconsulta?
+
+Una subconsulta es simplemente un `SELECT` dentro de otro `SELECT`. Va entre parentesis y puede aparecer en diferentes partes de tu consulta: en el `WHERE`, en el `FROM`, o incluso en el `SELECT`.
+
+Pensalo asi: en lugar de escribir un valor fijo, le decis a SQL "calcula este valor por mi con otra consulta".
+
+---
+
+### Subconsultas en WHERE
+
+Este es el uso mas comun. Vamos a ver las diferentes formas.
+
+#### Subconsulta escalar (devuelve un solo valor)
+
+Quiero ver todos los productos que cuestan mas que el precio promedio:
+
+```sql
+SELECT nombre, precio
+FROM productos
+WHERE precio > (SELECT AVG(precio) FROM productos);
+```
+
+Lo que pasa aqui es que PostgreSQL primero ejecuta la subconsulta interna (`SELECT AVG(precio) FROM productos`), obtiene un numero (digamos 45.50), y luego ejecuta la consulta externa como si dijera `WHERE precio > 45.50`.
+
+<Callout type="info">
+Una subconsulta escalar es la que devuelve **exactamente una fila y una columna** (un solo valor). Si devuelve mas de una fila, PostgreSQL va a tirar un error.
+</Callout>
+
+#### Subconsulta con IN (devuelve una lista)
+
+Quiero ver los clientes que han hecho al menos un pedido:
+
+```sql
+SELECT nombre, email
+FROM clientes
+WHERE id IN (SELECT DISTINCT cliente_id FROM pedidos);
+```
+
+La subconsulta devuelve una lista de IDs, y `IN` verifica si el `id` del cliente esta en esa lista.
+
+Otro ejemplo: productos que nunca se han vendido:
+
+```sql
+SELECT nombre, precio
+FROM productos
+WHERE id NOT IN (
+    SELECT DISTINCT producto_id
+    FROM detalle_pedidos
+);
+```
+
+<Callout type="warning" title="Cuidado con NOT IN y NULLs">
+Si la subconsulta dentro de `NOT IN` devuelve algun valor `NULL`, el resultado completo sera vacio. Esto es una trampa clasica de SQL. Si hay riesgo de NULLs, usa `NOT EXISTS` en su lugar (lo vemos a continuacion).
+</Callout>
+
+#### Subconsulta con EXISTS
+
+`EXISTS` verifica si una subconsulta devuelve **al menos una fila**. No le importa que datos devuelve, solo si hay resultados o no.
+
+Clientes que tienen al menos un pedido:
+
+```sql
+SELECT c.nombre, c.email
+FROM clientes c
+WHERE EXISTS (
+    SELECT 1
+    FROM pedidos p
+    WHERE p.cliente_id = c.id
+);
+```
+
+Y lo contrario: clientes sin ningun pedido:
+
+```sql
+SELECT c.nombre, c.email
+FROM clientes c
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM pedidos p
+    WHERE p.cliente_id = c.id
+);
+```
+
+<Callout type="tip">
+El `SELECT 1` dentro de `EXISTS` es una convencion. Podrias poner `SELECT *` o `SELECT 42` y funcionaria igual. PostgreSQL solo verifica si hay filas, no le importa que columnas selecciones.
+</Callout>
+
+---
+
+### Subconsultas en FROM (tablas derivadas)
+
+Podemos usar una subconsulta como si fuera una tabla temporal. Esto se llama **tabla derivada** y siempre necesita un alias.
+
+Ejemplo: quiero ver el total gastado por cliente, pero solo los que gastaron mas de 500:
+
+```sql
+SELECT sub.nombre, sub.total_gastado
+FROM (
+    SELECT c.nombre, SUM(p.total) AS total_gastado
+    FROM clientes c
+    JOIN pedidos p ON c.id = p.cliente_id
+    GROUP BY c.nombre
+) AS sub
+WHERE sub.total_gastado > 500
+ORDER BY sub.total_gastado DESC;
+```
+
+<Callout type="info">
+Si, esto tambien se puede hacer con `HAVING`. Pero las tablas derivadas son utiles cuando necesitas hacer operaciones adicionales sobre resultados ya agrupados.
+</Callout>
+
+---
+
+### Subconsultas en SELECT (subconsultas escalares)
+
+Podemos calcular un valor en cada fila usando una subconsulta en la lista de columnas:
+
+```sql
+SELECT
+    p.nombre,
+    p.precio,
+    (SELECT AVG(precio) FROM productos) AS precio_promedio,
+    p.precio - (SELECT AVG(precio) FROM productos) AS diferencia
+FROM productos p
+ORDER BY diferencia DESC;
+```
+
+Esto agrega dos columnas calculadas: el precio promedio general y cuanto se aleja cada producto de ese promedio.
+
+Otro ejemplo mas util: para cada cliente, cuantos pedidos tiene:
+
+```sql
+SELECT
+    c.nombre,
+    c.ciudad,
+    (SELECT COUNT(*)
+     FROM pedidos p
+     WHERE p.cliente_id = c.id) AS total_pedidos
+FROM clientes c
+ORDER BY total_pedidos DESC;
+```
+
+---
+
+### Subconsultas correlacionadas vs no correlacionadas
+
+Esta distincion es **clave para entender el rendimiento**.
+
+**No correlacionada:** la subconsulta se ejecuta una sola vez y su resultado se reutiliza.
+
+```sql
+-- Se ejecuta UNA vez: calcula el promedio y listo
+SELECT nombre, precio
+FROM productos
+WHERE precio > (SELECT AVG(precio) FROM productos);
+```
+
+**Correlacionada:** la subconsulta se ejecuta **una vez por cada fila** de la consulta externa, porque depende de un valor de esa fila.
+
+```sql
+-- Se ejecuta UNA VEZ POR CADA CLIENTE
+SELECT c.nombre,
+    (SELECT COUNT(*) FROM pedidos p WHERE p.cliente_id = c.id) AS total_pedidos
+FROM clientes c;
+```
+
+<Callout type="performance" title="Cuidado con subconsultas correlacionadas">
+Una subconsulta correlacionada puede tener complejidad **O(n * m)** donde `n` es el numero de filas de la consulta externa y `m` el costo de la subconsulta interna. Si la tabla `clientes` tiene 10,000 filas y `pedidos` tiene 100,000 filas, esta ejecutando la subconsulta interna 10,000 veces. Muchas veces un `JOIN` con `GROUP BY` logra el mismo resultado de forma mucho mas eficiente.
+</Callout>
+
+El mismo resultado con JOIN (generalmente mas rapido):
+
+```sql
+SELECT c.nombre, COUNT(p.id) AS total_pedidos
+FROM clientes c
+LEFT JOIN pedidos p ON c.id = p.cliente_id
+GROUP BY c.nombre
+ORDER BY total_pedidos DESC;
+```
+
+---
+
+### Common Table Expressions (CTEs)
+
+Las CTEs son una forma de darle **nombre temporal** a una subconsulta para usarla mas adelante. Se definen con la palabra clave `WITH`.
+
+#### Sintaxis basica
+
+```sql
+WITH nombre_cte AS (
+    SELECT ...
+)
+SELECT * FROM nombre_cte;
+```
+
+Veamos un ejemplo real. Quiero encontrar los clientes VIP (los que gastaron mas de 1000) y ver sus datos:
+
+```sql
+WITH clientes_vip AS (
+    SELECT cliente_id, SUM(total) AS total_gastado
+    FROM pedidos
+    GROUP BY cliente_id
+    HAVING SUM(total) > 1000
+)
+SELECT c.nombre, c.email, cv.total_gastado
+FROM clientes c
+JOIN clientes_vip cv ON c.id = cv.cliente_id
+ORDER BY cv.total_gastado DESC;
+```
+
+Comparalo con la version sin CTE:
+
+```sql
+SELECT c.nombre, c.email, sub.total_gastado
+FROM clientes c
+JOIN (
+    SELECT cliente_id, SUM(total) AS total_gastado
+    FROM pedidos
+    GROUP BY cliente_id
+    HAVING SUM(total) > 1000
+) sub ON c.id = sub.cliente_id
+ORDER BY sub.total_gastado DESC;
+```
+
+Ambas hacen lo mismo, pero la version con CTE es mas facil de leer porque le diste un nombre descriptivo (`clientes_vip`) a la subconsulta.
+
+#### Por que las CTEs mejoran la legibilidad?
+
+Imagina que tenes una consulta compleja con subconsultas anidadas tres niveles. Es una pesadilla de leer. Con CTEs, podes descomponer la logica paso a paso:
+
+```sql
+-- Paso 1: calcular ventas por producto
+WITH ventas_por_producto AS (
+    SELECT
+        dp.producto_id,
+        SUM(dp.cantidad) AS total_vendido,
+        SUM(dp.cantidad * dp.precio_unitario) AS ingresos
+    FROM detalle_pedidos dp
+    GROUP BY dp.producto_id
+),
+-- Paso 2: clasificar productos
+productos_clasificados AS (
+    SELECT
+        p.nombre,
+        p.categoria,
+        vp.total_vendido,
+        vp.ingresos,
+        CASE
+            WHEN vp.total_vendido > 100 THEN 'Estrella'
+            WHEN vp.total_vendido > 50  THEN 'Popular'
+            ELSE 'Normal'
+        END AS clasificacion
+    FROM productos p
+    JOIN ventas_por_producto vp ON p.id = vp.producto_id
+)
+-- Paso 3: consulta final
+SELECT clasificacion, COUNT(*) AS cantidad, SUM(ingresos) AS ingresos_totales
+FROM productos_clasificados
+GROUP BY clasificacion
+ORDER BY ingresos_totales DESC;
+```
+
+Cada CTE es un "paso" con nombre claro. Es como escribir un programa paso a paso en lugar de meter todo en una sola linea.
+
+#### Multiples CTEs en una consulta
+
+Como viste en el ejemplo anterior, podes definir varias CTEs separadas por comas. Cada una puede referenciar a las anteriores:
+
+```sql
+WITH
+pedidos_recientes AS (
+    SELECT * FROM pedidos
+    WHERE fecha >= CURRENT_DATE - INTERVAL '30 days'
+),
+clientes_activos AS (
+    SELECT DISTINCT cliente_id
+    FROM pedidos_recientes
+),
+resumen AS (
+    SELECT
+        c.ciudad,
+        COUNT(*) AS clientes_activos
+    FROM clientes c
+    JOIN clientes_activos ca ON c.id = ca.cliente_id
+    GROUP BY c.ciudad
+)
+SELECT * FROM resumen ORDER BY clientes_activos DESC;
+```
+
+<Callout type="tip" title="Regla de oro">
+Si tu consulta tiene mas de 2 subconsultas anidadas, probablemente deberia usar CTEs. Tu yo del futuro (y tus companeros) te lo van a agradecer.
+</Callout>
+
+---
+
+### Rendimiento de CTEs en PostgreSQL
+
+<Callout type="performance" title="CTEs materializadas vs no materializadas">
+Antes de PostgreSQL 12, las CTEs siempre se **materializaban**: PostgreSQL ejecutaba la CTE, guardaba el resultado en memoria, y luego la consulta principal leia de ahi. Esto podia ser mas lento porque el optimizador no podia "empujar" filtros dentro de la CTE.
+
+Desde **PostgreSQL 12**, si la CTE se usa solo una vez y no es recursiva, PostgreSQL puede hacer **inline** de la CTE (no materializarla), permitiendo al optimizador aplicar filtros y optimizaciones.
+
+Podes controlar esto manualmente:
+
+```sql
+-- Forzar materializacion (util si la CTE se usa muchas veces)
+WITH datos AS MATERIALIZED (
+    SELECT * FROM productos WHERE precio > 100
+)
+SELECT * FROM datos WHERE categoria = 'Electronica';
+
+-- Forzar inline (util para que el optimizador pueda optimizar)
+WITH datos AS NOT MATERIALIZED (
+    SELECT * FROM productos WHERE precio > 100
+)
+SELECT * FROM datos WHERE categoria = 'Electronica';
+```
+</Callout>
+
+---
+
+### Cuando usar subconsulta vs JOIN?
+
+<CommandTable commands={[
+  { command: "Filtrar por un valor calculado", description: "Subconsulta escalar en WHERE" },
+  { command: "Verificar existencia", description: "EXISTS (generalmente mas rapido que IN)" },
+  { command: "Combinar datos de varias tablas", description: "JOIN" },
+  { command: "Consulta compleja con multiples pasos", description: "CTEs" },
+  { command: "Necesitas el resultado en cada fila", description: "JOIN o subconsulta en SELECT" },
+  { command: "Subconsulta correlacionada costosa", description: "Reescribir como JOIN + GROUP BY" },
+]} />
+
+<Callout type="tip">
+No hay una regla absoluta. En muchos casos, PostgreSQL optimiza subconsultas y JOINs de forma similar. Pero como regla general: si podes escribirlo con JOIN y es legible, preferi el JOIN.
+</Callout>
+
+---
+
+### Ejercicios
+
+**Ejercicio 1:** Encontra todos los productos cuyo precio es mayor al precio promedio de su misma categoria. (Pista: necesitas una subconsulta correlacionada).
+
+```sql
+SELECT nombre, precio, categoria
+FROM productos p
+WHERE precio > (
+    SELECT AVG(precio)
+    FROM productos
+    WHERE categoria = p.categoria
+);
+```
+
+**Ejercicio 2:** Usa `EXISTS` para encontrar las categorias que tienen al menos un producto con stock menor a 10.
+
+```sql
+SELECT DISTINCT p.categoria
+FROM productos p
+WHERE EXISTS (
+    SELECT 1
+    FROM productos p2
+    WHERE p2.categoria = p.categoria
+    AND p2.stock < 10
+);
+```
+
+**Ejercicio 3:** Usando una CTE, calcula el total de ventas por cliente y muestra solo los que estan por encima del promedio de todos los clientes.
+
+```sql
+WITH ventas_cliente AS (
+    SELECT cliente_id, SUM(total) AS total_ventas
+    FROM pedidos
+    GROUP BY cliente_id
+)
+SELECT c.nombre, vc.total_ventas
+FROM clientes c
+JOIN ventas_cliente vc ON c.id = vc.cliente_id
+WHERE vc.total_ventas > (SELECT AVG(total_ventas) FROM ventas_cliente)
+ORDER BY vc.total_ventas DESC;
+```
+
+**Ejercicio 4:** Escribe una consulta con multiples CTEs que: (1) calcule las ventas totales por producto, (2) identifique los productos del top 3, y (3) muestre los clientes que compraron esos productos.
+
+```sql
+WITH ventas_producto AS (
+    SELECT producto_id, SUM(cantidad * precio_unitario) AS total_ventas
+    FROM detalle_pedidos
+    GROUP BY producto_id
+),
+top_productos AS (
+    SELECT producto_id
+    FROM ventas_producto
+    ORDER BY total_ventas DESC
+    LIMIT 3
+),
+clientes_top AS (
+    SELECT DISTINCT p.cliente_id
+    FROM pedidos p
+    JOIN detalle_pedidos dp ON p.id = dp.pedido_id
+    WHERE dp.producto_id IN (SELECT producto_id FROM top_productos)
+)
+SELECT c.nombre, c.email
+FROM clientes c
+JOIN clientes_top ct ON c.id = ct.cliente_id;
+```
+
+**Ejercicio 5:** Reescribi la siguiente subconsulta correlacionada como un JOIN con GROUP BY. Compara mentalmente cual seria mas eficiente:
+
+```sql
+-- Version original (subconsulta correlacionada)
+SELECT e.nombre, e.departamento,
+    (SELECT COUNT(*) FROM empleados e2 WHERE e2.departamento = e.departamento) AS total_depto
+FROM empleados e;
+
+-- Tu version con JOIN:
+SELECT e.nombre, e.departamento, d.total_depto
+FROM empleados e
+JOIN (
+    SELECT departamento, COUNT(*) AS total_depto
+    FROM empleados
+    GROUP BY departamento
+) d ON e.departamento = d.departamento;
+```
+
+**Ejercicio 6:** Encontra los empleados cuyo salario es el mas alto dentro de su departamento. Resolverlo de dos formas: con subconsulta correlacionada y con CTE.
+
+```sql
+-- Con subconsulta correlacionada
+SELECT nombre, departamento, salario
+FROM empleados e
+WHERE salario = (
+    SELECT MAX(salario) FROM empleados
+    WHERE departamento = e.departamento
+);
+
+-- Con CTE
+WITH max_por_depto AS (
+    SELECT departamento, MAX(salario) AS max_salario
+    FROM empleados
+    GROUP BY departamento
+)
+SELECT e.nombre, e.departamento, e.salario
+FROM empleados e
+JOIN max_por_depto m
+    ON e.departamento = m.departamento
+    AND e.salario = m.max_salario;
+```

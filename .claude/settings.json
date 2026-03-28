@@ -1,0 +1,40 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//home/pvill/workspace/curso-git-github/**)",
+      "Bash(wc -l /home/pvill/workspace/curso-git-github/src/content/*.mdx)",
+      "Read(//home/pvill/workspace/**)",
+      "Bash(npm install)",
+      "WebFetch(domain:www.aprendesql.dev)",
+      "Bash(npm run build)",
+      "Bash(kill %1)",
+      "Bash(docker --version)",
+      "Bash(cat /home/pvill/workspace/curso-git-github/.github/workflows/*)",
+      "Bash(ls -la /home/pvill/workspace/curso-sql/.env*)",
+      "Bash(__NEW_LINE_3636189509ea23b2__ echo \"=== Checking for any obvious syntax issues ===\")",
+      "Bash(node -c /home/pvill/workspace/curso-sql/astro.config.mjs)",
+      "Bash(node -c /home/pvill/workspace/curso-sql/package.json)",
+      "Bash(__NEW_LINE_7cf7fc4d6e100c94__ jq empty /home/pvill/workspace/curso-sql/package.json)",
+      "Bash(python3 -m json.tool /home/pvill/workspace/curso-sql/package.json)",
+      "Bash(__NEW_LINE_63461f4d06a6bc76__ echo \"=== Final verification checks ===\")",
+      "Bash(for comp in Layout Sidebar MobileNav Hero ModuleSection Footer ScrollToTop NextSection)",
+      "Bash(do)",
+      "Bash(test -f /home/pvill/workspace/curso-sql/src/components/$comp.astro)",
+      "Bash(test -f /home/pvill/workspace/curso-sql/src/layouts/$comp.astro)",
+      "Bash(echo \"  ✓ $comp\")",
+      "Bash(echo \"  ✗ $comp MISSING\")",
+      "Bash(done)",
+      "Bash(for content in module-01 module-02 module-03 module-04 module-05 module-06 module-07 module-08 module-09 module-10 exercises errores-comunes cheatsheet)",
+      "Bash(test -f /home/pvill/workspace/curso-sql/src/content/$content.mdx)",
+      "Bash(echo \"  ✓ $content\")",
+      "Bash(echo \"  ✗ $content MISSING\")",
+      "Bash(python3 -c \":*)",
+      "Bash(__NEW_LINE_0859e896d4d4bb7c__ echo \"=== Public directory files ===\")",
+      "Bash(__NEW_LINE_f7c4dd7095ef177e__ echo \"=== Verifying ''inicio'' section ===\")",
+      "Bash(grep -i \"Ropa\\\\|Alimentos\\\\|Perifericos\\\\|Audio\\\\|Cables\\\\|Monitores\\\\|Oferta\\\\|descontinuado\\\\|Descontinuado\\\\|Buenos Aires\\\\|Cordoba\\\\|Test\\\\|prioritario\\\\|vip\" /home/pvill/workspace/curso-sql/src/content/module-*.mdx /home/pvill/workspace/curso-sql/src/content/exercises.mdx /home/pvill/workspace/curso-sql/src/content/errores-comunes.mdx /home/pvill/workspace/curso-sql/src/content/cheatsheet.mdx)",
+      "Bash(git init)",
+      "Bash(gh auth status)",
+      "Bash(git add -A)"
+    ]
+  }
+}

@@ -1,0 +1,109 @@
+import Callout from "../components/Callout.astro"
+
+## ¿Que es una base de datos?
+
+Imagina que tienes un negocio y llevas el registro de tus clientes en una libreta. Al principio funciona bien, pero cuando tienes 500 clientes y necesitas encontrar a todos los de Santiago que compraron el mes pasado... la libreta se queda corta.
+
+Una **base de datos** es exactamente eso: un sistema organizado para almacenar, buscar y manipular informacion de forma eficiente. En lugar de una libreta, tienes un software optimizado que puede buscar entre millones de registros en milisegundos.
+
+Las bases de datos **relacionales** (las que vamos a usar en este curso) organizan la informacion en **tablas** con filas y columnas, como una hoja de calculo pero con superpoderes:
+
+- Pueden manejar millones de registros sin perder velocidad
+- Garantizan que los datos sean consistentes
+- Permiten relacionar datos entre distintas tablas
+- Multiples usuarios pueden acceder a la vez sin problemas
+
+## ¿Que es SQL?
+
+**SQL** (Structured Query Language) es el lenguaje que usamos para comunicarnos con bases de datos relacionales. Nacio en los anos 70 en IBM y hoy en dia es uno de los lenguajes mas usados del mundo.
+
+<Callout type="info" title="SQL se pronuncia...">
+  Hay dos formas aceptadas: "ese-cu-ele" (letra por letra) o "sequel" (como en ingles). Ambas estan bien. En este curso usaremos "SQL" como sigla.
+</Callout>
+
+### El paradigma declarativo
+
+Antes de ver codigo, necesitas entender algo fundamental: SQL pertenece al **paradigma declarativo**. Esto cambia completamente la forma en que piensas al programar.
+
+En programacion existen dos grandes familias de paradigmas:
+
+- **Imperativo**: tu escribes los pasos exactos que la computadora debe seguir. Le dices **como** hacer algo. Es lo que hacen lenguajes como Python, JavaScript, Java o C. Tu controlas el flujo: bucles, condicionales, variables que van cambiando paso a paso.
+
+- **Declarativo**: tu describes el **resultado que quieres** y el sistema decide como obtenerlo. No te preocupas por el orden de ejecucion, ni por los algoritmos internos, ni por como se recorren los datos. Solo defines **que** necesitas.
+
+SQL es declarativo. Esto significa que cuando escribes una consulta, no estas dando instrucciones paso a paso. Estas haciendo una **declaracion** de lo que quieres obtener:
+
+```sql
+-- Tu describes lo que quieres:
+SELECT nombre, email
+FROM clientes
+WHERE ciudad = 'Santiago';
+```
+
+Con esa consulta le estas diciendo: "dame el nombre y email de los clientes que viven en Santiago". No le dices como buscar, en que orden recorrer los datos ni que algoritmo usar. La base de datos se encarga de eso.
+
+¿Por que esto importa? Porque libera al programador de pensar en la implementacion. PostgreSQL tiene un **planificador de consultas** (query planner) que analiza tu consulta y decide la estrategia mas eficiente para ejecutarla. Puede usar indices, paralelismo, distintos algoritmos de ordenamiento... todo sin que tu lo pidas. Tu trabajo es describir bien lo que necesitas; el trabajo del motor es encontrar la mejor forma de darlo.
+
+<Callout type="tip" title="Otros lenguajes declarativos">
+  SQL no es el unico lenguaje declarativo. HTML describe la estructura de una pagina (no como renderizarla). CSS describe estilos (no como pintarlos). Las expresiones regulares describen patrones (no como buscarlos). Si ya usaste alguno de estos, ya tienes experiencia con el paradigma declarativo.
+</Callout>
+
+## ¿Que es PostgreSQL?
+
+**PostgreSQL** (o simplemente "Postgres") es un sistema de gestion de bases de datos relacional, gratuito y de codigo abierto. Es uno de los mas potentes y populares del mundo, usado por empresas como Apple, Instagram, Spotify y Netflix.
+
+¿Por que aprender PostgreSQL?
+
+- **Es gratis y open source**: sin licencias ni costos ocultos
+- **Es potente**: soporta consultas complejas, datos JSON, busqueda de texto completo y mucho mas
+- **Es el estandar de la industria**: si aprendes Postgres, puedes trabajar con casi cualquier base de datos relacional
+- **Gran comunidad**: documentacion excelente y millones de desarrolladores que lo usan
+- **Cumple con el estandar SQL**: lo que aprendas aqui aplica a MySQL, SQL Server, SQLite y otros
+
+<Callout type="tip" title="¿Y otras bases de datos?">
+  El 90% de lo que vas a aprender en este curso funciona igual en MySQL, SQL Server, SQLite y otros motores SQL. PostgreSQL tiene algunas funciones extra, pero las bases son las mismas.
+</Callout>
+
+## Declarativo vs imperativo: un ejemplo concreto
+
+Para que la diferencia quede clara, veamos el mismo problema resuelto en ambos paradigmas.
+
+En Python (imperativo), para obtener los clientes de Santiago escribirias algo asi:
+
+```python
+# Enfoque imperativo (paso a paso)
+clientes_santiago = []
+for cliente in todos_los_clientes:
+    if cliente.ciudad == "Santiago":
+        clientes_santiago.append(cliente.nombre)
+```
+
+En SQL, simplemente **describes lo que quieres**:
+
+```sql
+-- Enfoque declarativo (describes el resultado)
+SELECT nombre
+FROM clientes
+WHERE ciudad = 'Santiago';
+```
+
+No le dices a la base de datos "recorre todos los clientes uno por uno y fijate si la ciudad es Santiago". Le dices "quiero los nombres donde la ciudad sea Santiago" y ella decide la forma mas eficiente de hacerlo.
+
+### Por que importa esta distincion
+
+Si vienes de Python, R, JavaScript o cualquier lenguaje de proposito general, tu cerebro esta entrenado para pensar en pasos: "primero recorro, luego filtro, luego guardo". Esa logica **no sirve en SQL**. Intentar escribir SQL como si fuera un bucle es una de las principales fuentes de frustacion (y de consultas lentas) en principiantes. La forma de abordar el problema es fundamentalmente distinta: en SQL no controlas el *como*, solo defines el *que*.
+
+La buena noticia es que no estas solo en esta transicion. Existen frameworks en lenguajes imperativos que adoptan un estilo declarativo muy similar al de SQL, lo que facilita mucho el salto mental:
+
+- **Python**: `pandas` permite encadenar operaciones como `.query()`, `.groupby()`, `.merge()` que se parecen mucho a `WHERE`, `GROUP BY` y `JOIN`. SQLAlchemy va un paso mas alla y te deja construir consultas SQL con sintaxis Python.
+- **R**: `dplyr` (parte del tidyverse) fue disenado explicitamente para imitar la logica de SQL. Funciones como `filter()`, `select()`, `group_by()` y `summarise()` son practicamente traducciones directas de clausulas SQL.
+
+Si ya usas alguno de estos, vas a notar que aprender SQL se siente familiar. Y si aun no los conoces, aprender SQL primero te va a hacer mucho mas productivo cuando los uses despues.
+
+<Callout type="performance" title="Todo tiene un costo">
+  Cada operacion SQL tiene un costo computacional. Cuando escribes `SELECT * FROM clientes`, la base de datos tiene que leer **todas** las columnas de cada fila, transferirlas por red y formatearlas para mostrartelas — aunque solo necesites el nombre y el email. Por eso, en aplicaciones reales siempre se especifican las columnas exactas que se necesitan (`SELECT nombre, email FROM clientes`). El `SELECT *` es perfecto para explorar datos o dar tus primeros pasos con una tabla, pero en produccion es un desperdicio de recursos. A lo largo de este curso vamos a ir aprendiendo como escribir consultas que hagan solo el trabajo necesario.
+</Callout>
+
+## ¿Que sigue?
+
+En el proximo modulo vas a preparar tu entorno de trabajo: instalar PostgreSQL, configurar DBeaver y cargar la base de datos de practica que usaremos a lo largo de todo el curso.

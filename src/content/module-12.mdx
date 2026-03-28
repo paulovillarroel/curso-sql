@@ -1,0 +1,751 @@
+import Callout from "../components/Callout.astro"
+import CommandTable from "../components/CommandTable.astro"
+
+Ya sabes agrupar datos con `GROUP BY` y calcular promedios con `AVG`. Pero el analisis de datos real va mas alla: necesitas rankings, comparaciones con periodos anteriores, acumulados progresivos y medidas estadisticas como la mediana o la desviacion estandar. En este modulo vas a aprender las herramientas de SQL que convierten una base de datos en una plataforma de analisis.
+
+<Callout type="warning" title="Prerequisito">
+  Este modulo asume que dominas GROUP BY y HAVING (Modulo 6), subconsultas y CTEs (Modulo 8), y funciones basicas (Modulo 9). Si alguno de esos temas te suena nuevo, revisalos antes de continuar.
+</Callout>
+
+---
+
+## Funciones de ventana (Window Functions)
+
+### Que son y por que las necesitas
+
+Con `GROUP BY` obtienes un resumen que **colapsa** las filas. Pero a veces necesitas el resumen **y** los datos individuales al mismo tiempo. Por ejemplo: ver cada empleado con su salario y el salario promedio de su departamento, en la misma fila.
+
+Comparemos ambos enfoques:
+
+```sql
+-- GROUP BY: colapsa filas (una fila por departamento)
+SELECT departamento, ROUND(AVG(salario), 2) AS promedio
+FROM empleados
+GROUP BY departamento;
+```
+
+```
+ departamento │ promedio
+──────────────┼──────────
+ Gerencia     │ 85000.00
+ Tecnologia   │ 58333.33
+ Ventas       │ 42000.00
+ Soporte      │ 37000.00
+```
+
+Pierdes el detalle individual. Ahora con una funcion de ventana:
+
+```sql
+-- Window function: mantiene CADA fila y agrega el promedio
+SELECT
+  nombre,
+  departamento,
+  salario,
+  ROUND(AVG(salario) OVER (PARTITION BY departamento), 2) AS promedio_depto
+FROM empleados
+ORDER BY departamento, salario DESC;
+```
+
+```
+ nombre              │ departamento │ salario │ promedio_depto
+─────────────────────┼──────────────┼─────────┼───────────────
+ Sofia Mendez        │ Gerencia     │  85000  │  85000.00
+ Ricardo Soto        │ Soporte      │  38000  │  37000.00
+ Patricia Herrera    │ Soporte      │  36000  │  37000.00
+ Miguel Angel Torres │ Tecnologia   │  62000  │  58333.33
+ Alejandro Vega      │ Tecnologia   │  58000  │  58333.33
+ Camila Rojas        │ Tecnologia   │  55000  │  58333.33
+ ...
+```
+
+Cada empleado conserva su fila individual, pero ahora tiene una columna extra con el promedio de su departamento. Eso es una **funcion de ventana**.
+
+### La clausula OVER: anatomia de una funcion de ventana
+
+La clave es `OVER()`. Cualquier funcion de agregacion (SUM, AVG, COUNT, etc.) se convierte en funcion de ventana al agregarle `OVER()`:
+
+```
+funcion() OVER (
+    PARTITION BY columna    -- divide en grupos (opcional)
+    ORDER BY columna        -- ordena dentro del grupo (opcional)
+)
+```
+
+`PARTITION BY` define las "ventanas" (grupos de filas sobre los que se calcula). Visualmente:
+
+```
+ Tabla empleados con PARTITION BY departamento:
+
+ ┌──────────────────────┬──────────────┬─────────┐
+ │ nombre               │ departamento │ salario │
+ ├──────────────────────┼──────────────┼─────────┤
+ │ Juan Perez           │ Ventas       │  45000  │ ─┐
+ │ Valentina Castro     │ Ventas       │  42000  │  ├─ Ventana 1 (Ventas)
+ │ Fernanda Luna        │ Ventas       │  40000  │  │  AVG = 42000
+ │ Daniela Flores       │ Ventas       │  41000  │ ─┘
+ │ Miguel Angel Torres  │ Tecnologia   │  62000  │ ─┐
+ │ Camila Rojas         │ Tecnologia   │  55000  │  ├─ Ventana 2 (Tecnologia)
+ │ Alejandro Vega       │ Tecnologia   │  58000  │ ─┘  AVG = 58333
+ │ Ricardo Soto         │ Soporte      │  38000  │ ─┐  Ventana 3 (Soporte)
+ │ Patricia Herrera     │ Soporte      │  36000  │ ─┘  AVG = 37000
+ │ Sofia Mendez         │ Gerencia     │  85000  │ ──  Ventana 4 (Gerencia)
+ └──────────────────────┴──────────────┴─────────┘     AVG = 85000
+
+ La funcion se calcula DENTRO de cada ventana, por separado.
+```
+
+<Callout type="tip" title="OVER() vacio = toda la tabla">
+  Si usas `OVER()` sin nada adentro (parentesis vacios), la ventana es la tabla completa. `AVG(salario) OVER()` calcula el promedio de TODOS los empleados. Esto es util para calcular porcentajes del total.
+</Callout>
+
+### Porcentaje del total con OVER()
+
+Un patron muy comun en analisis: calcular que porcentaje representa cada fila del total.
+
+```sql
+SELECT
+  nombre,
+  departamento,
+  salario,
+  SUM(salario) OVER() AS total_empresa,
+  ROUND(salario::NUMERIC / SUM(salario) OVER() * 100, 2) AS porcentaje
+FROM empleados
+ORDER BY porcentaje DESC;
+```
+
+`SUM(salario) OVER()` suma todos los salarios (sin PARTITION BY = toda la tabla), y se repite en cada fila. Asi puedes dividir cada salario individual entre el total para obtener el porcentaje.
+
+---
+
+## Rankings: ROW_NUMBER, RANK y DENSE_RANK
+
+Las funciones de ranking asignan un numero de posicion a cada fila segun un orden.
+
+<CommandTable commands={[
+  { command: "ROW_NUMBER() OVER(...)", description: "Numero secuencial unico (1, 2, 3, 4...). Nunca hay empates." },
+  { command: "RANK() OVER(...)", description: "Ranking con saltos en empates (1, 2, 2, 4...). Salta posiciones." },
+  { command: "DENSE_RANK() OVER(...)", description: "Ranking sin saltos en empates (1, 2, 2, 3...). No salta posiciones." },
+  { command: "NTILE(n) OVER(...)", description: "Divide las filas en n grupos iguales. Util para cuartiles (n=4), deciles (n=10)." },
+]} />
+
+Veamos la diferencia con un ejemplo:
+
+```sql
+SELECT
+  nombre,
+  departamento,
+  salario,
+  ROW_NUMBER() OVER (ORDER BY salario DESC) AS row_num,
+  RANK()       OVER (ORDER BY salario DESC) AS rank,
+  DENSE_RANK() OVER (ORDER BY salario DESC) AS dense_rank
+FROM empleados;
+```
+
+```
+ nombre              │ salario │ row_num │ rank │ dense_rank
+─────────────────────┼─────────┼─────────┼──────┼───────────
+ Sofia Mendez        │  85000  │    1    │  1   │     1
+ Miguel Angel Torres │  62000  │    2    │  2   │     2
+ Alejandro Vega      │  58000  │    3    │  3   │     3
+ Camila Rojas        │  55000  │    4    │  4   │     4
+ Juan Perez          │  45000  │    5    │  5   │     5
+ Valentina Castro    │  42000  │    6    │  6   │     6
+ Daniela Flores      │  41000  │    7    │  7   │     7
+ Fernanda Luna       │  40000  │    8    │  8   │     8
+ Ricardo Soto        │  38000  │    9    │  9   │     9
+ Patricia Herrera    │  36000  │   10    │ 10   │    10
+```
+
+Sin empates las tres dan el mismo resultado. La diferencia se nota cuando hay valores iguales: `RANK` salta posiciones (1, 2, 2, **4**) y `DENSE_RANK` no (1, 2, 2, **3**).
+
+<Callout type="warning" title="ORDER BY es obligatorio en rankings">
+  ROW_NUMBER, RANK y DENSE_RANK **requieren** `ORDER BY` dentro del OVER(). Sin ORDER BY, no tiene sentido asignar un ranking. PARTITION BY es opcional: si lo omites, el ranking es sobre toda la tabla.
+</Callout>
+
+### El patron Top-N: lo vas a usar todo el tiempo
+
+Uno de los patrones mas utiles en analisis de datos: obtener los N mejores de cada grupo.
+
+```sql
+-- Producto mas vendido por categoria
+WITH ventas_producto AS (
+  SELECT
+    pr.nombre,
+    pr.categoria,
+    SUM(dp.cantidad) AS total_vendido,
+    ROW_NUMBER() OVER (
+      PARTITION BY pr.categoria
+      ORDER BY SUM(dp.cantidad) DESC
+    ) AS ranking
+  FROM productos pr
+  INNER JOIN detalle_pedidos dp ON pr.id = dp.producto_id
+  GROUP BY pr.nombre, pr.categoria
+)
+SELECT nombre, categoria, total_vendido
+FROM ventas_producto
+WHERE ranking = 1;
+```
+
+El truco: ROW_NUMBER dentro del CTE asigna el ranking por grupo, y luego filtras con `WHERE ranking <= N` en la consulta exterior.
+
+<Callout type="tip" title="CTE + ROW_NUMBER + WHERE ranking <= N">
+  Este patron responde preguntas como "los 3 mejores por grupo", "el primero de cada categoria", "el top 5 por ciudad". Lo vas a usar constantemente en analisis de datos.
+</Callout>
+
+### NTILE: dividir en grupos iguales
+
+`NTILE(n)` divide las filas en `n` grupos de tamano (aproximadamente) igual. Muy util para crear cuartiles, quintiles o deciles.
+
+```sql
+-- Dividir empleados en cuartiles salariales
+SELECT
+  nombre,
+  salario,
+  NTILE(4) OVER (ORDER BY salario) AS cuartil
+FROM empleados;
+```
+
+```
+ nombre              │ salario │ cuartil
+─────────────────────┼─────────┼────────
+ Patricia Herrera    │  36000  │    1     ← 25% mas bajo
+ Ricardo Soto        │  38000  │    1
+ Fernanda Luna       │  40000  │    1
+ Daniela Flores      │  41000  │    2
+ Valentina Castro    │  42000  │    2
+ Juan Perez          │  45000  │    2
+ Camila Rojas        │  55000  │    3
+ Alejandro Vega      │  58000  │    3
+ Miguel Angel Torres │  62000  │    4
+ Sofia Mendez        │  85000  │    4     ← 25% mas alto
+```
+
+---
+
+## LAG y LEAD: comparar con filas vecinas
+
+A veces necesitas comparar cada fila con la anterior o la siguiente. ¿Cuanto crecieron las ventas respecto al mes pasado? ¿El pedido actual es mayor que el anterior? Para eso existen LAG y LEAD.
+
+<CommandTable commands={[
+  { command: "LAG(col, n, default)", description: "Valor de n filas ANTES (default: 1 fila). Devuelve NULL si no existe fila anterior, a menos que especifiques un valor por defecto." },
+  { command: "LEAD(col, n, default)", description: "Valor de n filas DESPUES (default: 1 fila). Devuelve NULL si no existe fila siguiente." },
+]} />
+
+Ejemplo clasico: variacion mensual de ventas.
+
+```sql
+WITH ventas_mes AS (
+  SELECT
+    DATE_TRUNC('month', fecha) AS mes,
+    SUM(total) AS total_mes
+  FROM pedidos
+  GROUP BY DATE_TRUNC('month', fecha)
+)
+SELECT
+  TO_CHAR(mes, 'YYYY-MM') AS mes,
+  total_mes,
+  LAG(total_mes) OVER (ORDER BY mes) AS mes_anterior,
+  ROUND(
+    (total_mes - LAG(total_mes) OVER (ORDER BY mes))
+    / LAG(total_mes) OVER (ORDER BY mes) * 100,
+    2
+  ) AS variacion_pct
+FROM ventas_mes
+ORDER BY mes;
+```
+
+```
+   mes    │ total_mes │ mes_anterior │ variacion_pct
+──────────┼───────────┼──────────────┼──────────────
+ 2024-01  │  1479.97  │    NULL      │    NULL        ← sin mes anterior
+ 2024-02  │  2309.95  │   1479.97    │    56.08
+ 2024-03  │  1324.93  │   2309.95    │   -42.65       ← caida
+ 2024-04  │  1949.94  │   1324.93    │    47.17
+```
+
+La primera fila tiene NULL porque no hay mes anterior. Puedes usar el tercer parametro de LAG para poner un valor por defecto: `LAG(total_mes, 1, 0)`.
+
+<Callout type="info" title="LAG y LEAD requieren ORDER BY">
+  Para hablar de "la fila anterior" necesitas definir un orden. `LAG` y `LEAD` siempre necesitan `ORDER BY` dentro del `OVER()`. `PARTITION BY` es opcional: si lo agregas, la comparacion es dentro de cada grupo.
+</Callout>
+
+---
+
+## Agregaciones acumulativas y promedios moviles
+
+Cuando usas una funcion de agregacion (SUM, AVG, COUNT) con `OVER(ORDER BY ...)`, obtienes un **calculo acumulativo**: cada fila incluye los datos de todas las filas anteriores.
+
+### Suma acumulada (running total)
+
+```sql
+SELECT
+  fecha,
+  total,
+  SUM(total) OVER (ORDER BY fecha) AS acumulado,
+  COUNT(*) OVER (ORDER BY fecha) AS pedidos_hasta_fecha
+FROM pedidos
+ORDER BY fecha;
+```
+
+```
+   fecha    │  total  │ acumulado │ pedidos_hasta_fecha
+────────────┼─────────┼───────────┼────────────────────
+ 2024-01-15 │ 1389.98 │  1389.98  │         1
+ 2024-01-20 │   89.99 │  1479.97  │         2
+ 2024-02-01 │  499.98 │  1979.95  │         3
+ 2024-02-14 │   59.99 │  2039.94  │         4
+ 2024-02-28 │ 1749.98 │  3789.92  │         5
+ ...
+```
+
+Cada fila suma su valor al total de todas las filas anteriores. Es como una suma progresiva que va creciendo fila a fila.
+
+<Callout type="info" title="Como funciona el acumulado">
+  Cuando escribes `SUM(total) OVER (ORDER BY fecha)`, PostgreSQL suma desde la primera fila hasta la fila actual (inclusive). Internamente, la ventana por defecto es `ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`, que significa "desde el inicio hasta aqui".
+</Callout>
+
+### Promedio movil (moving average)
+
+El promedio movil suaviza fluctuaciones y muestra tendencias. Para calcularlo, defines una "ventana deslizante" de N filas usando `ROWS BETWEEN`:
+
+```sql
+SELECT
+  fecha,
+  total,
+  ROUND(
+    AVG(total) OVER (
+      ORDER BY fecha
+      ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+    ),
+    2
+  ) AS promedio_movil_3
+FROM pedidos
+ORDER BY fecha;
+```
+
+`ROWS BETWEEN 2 PRECEDING AND CURRENT ROW` significa "desde 2 filas antes hasta la fila actual" — una ventana de 3 filas que se va deslizando.
+
+<Callout type="tip" title="ROWS BETWEEN">
+  Esta clausula define el tamano de la ventana deslizante. Los valores mas comunes: `ROWS BETWEEN 2 PRECEDING AND CURRENT ROW` (3 filas), `ROWS BETWEEN 6 PRECEDING AND CURRENT ROW` (7 filas). Para promedios moviles de ventas semanales o mensuales.
+</Callout>
+
+### Acumulado por grupo
+
+Puedes combinar `PARTITION BY` con `ORDER BY` para calcular acumulados dentro de cada grupo:
+
+```sql
+-- Gasto acumulado de cada cliente a lo largo del tiempo
+SELECT
+  c.nombre,
+  p.fecha,
+  p.total,
+  SUM(p.total) OVER (
+    PARTITION BY c.id
+    ORDER BY p.fecha
+  ) AS gasto_acumulado
+FROM clientes c
+INNER JOIN pedidos p ON c.id = p.cliente_id
+ORDER BY c.nombre, p.fecha;
+```
+
+Esto muestra como va creciendo el gasto de cada cliente pedido a pedido. `PARTITION BY c.id` reinicia el acumulado para cada cliente.
+
+---
+
+## Funciones estadisticas
+
+Para analisis de datos necesitas ir mas alla del promedio. SQL tiene funciones estadisticas que te permiten medir dispersion, encontrar percentiles y detectar patrones.
+
+<CommandTable commands={[
+  { command: "STDDEV(col)", description: "Desviacion estandar muestral. Mide que tan dispersos estan los datos respecto al promedio." },
+  { command: "VARIANCE(col)", description: "Varianza muestral. Es el cuadrado de la desviacion estandar." },
+  { command: "PERCENTILE_CONT(p) WITHIN GROUP (ORDER BY col)", description: "Percentil continuo (interpola entre valores). p va de 0 a 1. 0.5 = mediana." },
+  { command: "PERCENTILE_DISC(p) WITHIN GROUP (ORDER BY col)", description: "Percentil discreto: devuelve un valor real de los datos (el mas cercano al percentil)." },
+  { command: "MODE() WITHIN GROUP (ORDER BY col)", description: "El valor que mas se repite (moda)." },
+]} />
+
+<Callout type="info" title="Que significan estas medidas">
+  El **promedio** (AVG) te dice el centro de los datos. La **desviacion estandar** (STDDEV) te dice que tan dispersos estan. Si el promedio de salarios es $50,000 y la desviacion es $5,000, la mayoria gana entre $45,000 y $55,000. Si la desviacion es $20,000, los salarios son muy variados. La **mediana** es el valor del medio cuando ordenas los datos: la mitad esta arriba y la mitad abajo.
+</Callout>
+
+### Resumen estadistico de salarios
+
+```sql
+SELECT
+  departamento,
+  COUNT(*) AS empleados,
+  ROUND(AVG(salario), 2) AS promedio,
+  ROUND(STDDEV(salario), 2) AS desviacion_std,
+  MIN(salario) AS minimo,
+  MAX(salario) AS maximo,
+  MAX(salario) - MIN(salario) AS rango
+FROM empleados
+GROUP BY departamento
+HAVING COUNT(*) > 1
+ORDER BY promedio DESC;
+```
+
+### Mediana y percentiles
+
+```sql
+-- Mediana y cuartiles del precio de productos
+SELECT
+  ROUND(PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY precio)::NUMERIC, 2) AS percentil_25,
+  ROUND(PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY precio)::NUMERIC, 2) AS mediana,
+  ROUND(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY precio)::NUMERIC, 2) AS percentil_75,
+  ROUND(AVG(precio), 2) AS promedio
+FROM productos;
+```
+
+<Callout type="tip" title="Mediana vs promedio">
+  La mediana (`PERCENTILE_CONT(0.5)`) es muchas veces mejor que el promedio para describir datos, porque no se ve afectada por valores extremos. Si tienes un producto de $1,300 y el resto cuesta entre $12 y $90, el promedio sube a ~$160 pero la mediana se mantiene representativa en ~$45.
+</Callout>
+
+Tambien puedes calcular percentiles **por grupo**:
+
+```sql
+-- Mediana del precio por categoria
+SELECT
+  categoria,
+  COUNT(*) AS productos,
+  ROUND(AVG(precio), 2) AS promedio,
+  ROUND(
+    PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY precio)::NUMERIC,
+    2
+  ) AS mediana
+FROM productos
+GROUP BY categoria
+ORDER BY mediana DESC;
+```
+
+### Moda
+
+```sql
+-- Categoria mas comun entre los productos
+SELECT MODE() WITHIN GROUP (ORDER BY categoria) AS categoria_mas_comun
+FROM productos;
+
+-- Ciudad mas comun entre los clientes
+SELECT MODE() WITHIN GROUP (ORDER BY ciudad) AS ciudad_mas_comun
+FROM clientes;
+```
+
+### STDDEV como funcion de ventana
+
+Las funciones estadisticas tambien funcionan como funciones de ventana. Esto es util para detectar valores atipicos:
+
+```sql
+-- Detectar pedidos con total inusual para cada cliente
+SELECT
+  c.nombre,
+  p.id AS pedido_id,
+  p.total,
+  ROUND(AVG(p.total) OVER (PARTITION BY c.id), 2) AS promedio_cliente,
+  ROUND(STDDEV(p.total) OVER (PARTITION BY c.id), 2) AS stddev_cliente
+FROM clientes c
+INNER JOIN pedidos p ON c.id = p.cliente_id
+ORDER BY c.nombre, p.total DESC;
+```
+
+Si un pedido esta a mas de 2 desviaciones estandar del promedio del cliente, probablemente es un valor atipico.
+
+---
+
+## FILTER: agregacion condicional
+
+Ya conoces el truco de usar `CASE WHEN` dentro de una funcion de agregacion para contar o sumar condicionalmente. PostgreSQL tiene una forma mas elegante: la clausula `FILTER`.
+
+```sql
+-- Forma clasica con CASE WHEN
+SELECT
+  c.nombre,
+  COUNT(*) AS total_pedidos,
+  COUNT(CASE WHEN p.estado = 'completado' THEN 1 END) AS completados,
+  COUNT(CASE WHEN p.estado = 'pendiente' THEN 1 END) AS pendientes
+FROM clientes c
+INNER JOIN pedidos p ON c.id = p.cliente_id
+GROUP BY c.nombre;
+
+-- Forma con FILTER (mas legible)
+SELECT
+  c.nombre,
+  COUNT(*) AS total_pedidos,
+  COUNT(*) FILTER (WHERE p.estado = 'completado') AS completados,
+  COUNT(*) FILTER (WHERE p.estado = 'pendiente') AS pendientes,
+  ROUND(AVG(p.total) FILTER (WHERE p.estado = 'completado'), 2) AS promedio_completados
+FROM clientes c
+INNER JOIN pedidos p ON c.id = p.cliente_id
+GROUP BY c.nombre
+ORDER BY total_pedidos DESC;
+```
+
+`FILTER` funciona con cualquier funcion de agregacion: COUNT, SUM, AVG, MIN, MAX, etc.
+
+<Callout type="warning" title="FILTER es de PostgreSQL">
+  La clausula `FILTER` es una extension de PostgreSQL, no es SQL estandar. Si alguna vez necesitas migrar a MySQL o SQL Server, tendras que volver al `CASE WHEN`. Pero en PostgreSQL, `FILTER` es mas legible y ligeramente mas eficiente.
+</Callout>
+
+---
+
+## Patrones practicos para analisis de datos
+
+### Porcentaje del total por grupo
+
+¿Que porcentaje de ventas representa cada producto dentro de su categoria?
+
+```sql
+SELECT
+  pr.categoria,
+  pr.nombre,
+  SUM(dp.cantidad) AS vendidos,
+  ROUND(
+    SUM(dp.cantidad)::NUMERIC /
+    SUM(SUM(dp.cantidad)) OVER (PARTITION BY pr.categoria) * 100,
+    1
+  ) AS pct_de_categoria
+FROM productos pr
+INNER JOIN detalle_pedidos dp ON pr.id = dp.producto_id
+GROUP BY pr.categoria, pr.nombre
+ORDER BY pr.categoria, vendidos DESC;
+```
+
+El truco: `SUM(SUM(dp.cantidad)) OVER (PARTITION BY pr.categoria)` es una funcion de ventana sobre una agregacion. Primero `SUM(dp.cantidad)` calcula el total por producto (GROUP BY), y luego `SUM(...) OVER (PARTITION BY categoria)` suma esos totales dentro de cada categoria.
+
+### Diferencia con el promedio del grupo
+
+¿Cuanto gana cada empleado por encima o debajo del promedio de su departamento?
+
+```sql
+SELECT
+  nombre,
+  departamento,
+  salario,
+  ROUND(AVG(salario) OVER (PARTITION BY departamento), 2) AS promedio_depto,
+  salario - ROUND(AVG(salario) OVER (PARTITION BY departamento), 2) AS diferencia
+FROM empleados
+ORDER BY departamento, diferencia DESC;
+```
+
+### Reutilizar ventanas con WINDOW
+
+Si repites la misma clausula `OVER` varias veces, puedes definirla una sola vez con `WINDOW`:
+
+```sql
+SELECT
+  nombre,
+  departamento,
+  salario,
+  AVG(salario) OVER w AS promedio,
+  MIN(salario) OVER w AS minimo,
+  MAX(salario) OVER w AS maximo,
+  salario - AVG(salario) OVER w AS diferencia
+FROM empleados
+WINDOW w AS (PARTITION BY departamento)
+ORDER BY departamento, salario DESC;
+```
+
+<Callout type="tip" title="WINDOW hace tu consulta mas legible">
+  Ademas de evitar repeticion, `WINDOW` reduce errores: si necesitas cambiar la particion, la cambias en un solo lugar. PostgreSQL tambien puede optimizar mejor la consulta cuando detecta que varias funciones usan la misma ventana.
+</Callout>
+
+---
+
+## Rendimiento de funciones de ventana
+
+<Callout type="performance" title="Sorting interno">
+  Cada clausula `OVER(ORDER BY ...)` distinta puede requerir una operacion de **ordenamiento** interna con costo O(n log n). Si tu consulta tiene 5 funciones de ventana con ORDER BY diferentes, PostgreSQL podria hacer 5 ordenamientos separados. Tips para optimizar:
+
+  - Reutiliza la misma ventana con `WINDOW` cuando sea posible: PostgreSQL ordena una sola vez.
+  - Un **indice** en las columnas del `PARTITION BY` y `ORDER BY` puede evitar el sorting.
+  - Con tablas grandes (millones de filas), revisa el plan de ejecucion con `EXPLAIN ANALYZE`.
+</Callout>
+
+---
+
+## Ejercicios
+
+**Ejercicio 1:** Muestra cada producto con su nombre, precio, categoria y el precio promedio de su categoria (usando una funcion de ventana). Agrega una columna que diga 'Por encima' o 'Por debajo' segun si el producto supera o no el promedio.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+  nombre,
+  categoria,
+  precio,
+  ROUND(AVG(precio) OVER (PARTITION BY categoria), 2) AS promedio_categoria,
+  CASE
+    WHEN precio >= AVG(precio) OVER (PARTITION BY categoria) THEN 'Por encima'
+    ELSE 'Por debajo'
+  END AS comparacion
+FROM productos
+ORDER BY categoria, precio DESC;
+```
+</details>
+
+**Ejercicio 2:** Rankea a los empleados por salario dentro de cada departamento usando DENSE_RANK. Muestra nombre, departamento, salario y el ranking.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+  nombre,
+  departamento,
+  salario,
+  DENSE_RANK() OVER (
+    PARTITION BY departamento
+    ORDER BY salario DESC
+  ) AS ranking
+FROM empleados
+ORDER BY departamento, ranking;
+```
+</details>
+
+**Ejercicio 3:** Calcula las ventas totales por mes para 2024. Para cada mes, muestra el total, el total del mes anterior (con LAG) y la diferencia absoluta entre ambos.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+WITH ventas_mes AS (
+  SELECT
+    DATE_TRUNC('month', fecha) AS mes,
+    SUM(total) AS total_mes
+  FROM pedidos
+  WHERE fecha >= '2024-01-01' AND fecha < '2025-01-01'
+  GROUP BY DATE_TRUNC('month', fecha)
+)
+SELECT
+  TO_CHAR(mes, 'YYYY-MM') AS mes,
+  ROUND(total_mes, 2) AS total_mes,
+  ROUND(LAG(total_mes) OVER (ORDER BY mes), 2) AS mes_anterior,
+  ROUND(ABS(total_mes - LAG(total_mes) OVER (ORDER BY mes)), 2) AS diferencia
+FROM ventas_mes
+ORDER BY mes;
+```
+</details>
+
+**Ejercicio 4:** Muestra los pedidos ordenados por fecha con una columna que acumule la suma total de todos los pedidos hasta esa fecha (running total).
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+  id,
+  fecha,
+  total,
+  SUM(total) OVER (ORDER BY fecha, id) AS acumulado
+FROM pedidos
+ORDER BY fecha, id;
+```
+
+Agregamos `id` al ORDER BY para desempatar pedidos del mismo dia y obtener un acumulado determinista.
+</details>
+
+**Ejercicio 5:** Calcula la mediana, el percentil 25 y el percentil 75 de los salarios de los empleados. Luego, en una segunda consulta, calcula los mismos valores pero separados por departamento.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+-- Global
+SELECT
+  ROUND(PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY salario)::NUMERIC, 2) AS p25,
+  ROUND(PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY salario)::NUMERIC, 2) AS mediana,
+  ROUND(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY salario)::NUMERIC, 2) AS p75
+FROM empleados;
+
+-- Por departamento
+SELECT
+  departamento,
+  COUNT(*) AS empleados,
+  ROUND(PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY salario)::NUMERIC, 2) AS p25,
+  ROUND(PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY salario)::NUMERIC, 2) AS mediana,
+  ROUND(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY salario)::NUMERIC, 2) AS p75
+FROM empleados
+GROUP BY departamento
+ORDER BY mediana DESC;
+```
+</details>
+
+**Ejercicio 6:** Para cada categoria de productos, muestra: la cantidad total de unidades vendidas, la cantidad vendida en pedidos completados y la cantidad en pedidos pendientes. Usa la clausula FILTER.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+  pr.categoria,
+  SUM(dp.cantidad) AS total_vendidas,
+  SUM(dp.cantidad) FILTER (WHERE pe.estado = 'completado') AS en_completados,
+  SUM(dp.cantidad) FILTER (WHERE pe.estado = 'pendiente') AS en_pendientes,
+  SUM(dp.cantidad) FILTER (WHERE pe.estado = 'enviado') AS en_enviados
+FROM productos pr
+INNER JOIN detalle_pedidos dp ON pr.id = dp.producto_id
+INNER JOIN pedidos pe ON dp.pedido_id = pe.id
+GROUP BY pr.categoria
+ORDER BY total_vendidas DESC;
+```
+</details>
+
+**Ejercicio 7 (Desafio):** Para cada cliente que haya hecho al menos un pedido, muestra su nombre, gasto total, ranking general por gasto (con RANK) y que porcentaje del gasto total de la empresa representa.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+WITH gasto_cliente AS (
+  SELECT
+    c.nombre,
+    SUM(p.total) AS gasto_total
+  FROM clientes c
+  INNER JOIN pedidos p ON c.id = p.cliente_id
+  GROUP BY c.id, c.nombre
+)
+SELECT
+  nombre,
+  gasto_total,
+  RANK() OVER (ORDER BY gasto_total DESC) AS ranking,
+  ROUND(
+    gasto_total / SUM(gasto_total) OVER() * 100,
+    2
+  ) AS porcentaje_empresa
+FROM gasto_cliente
+ORDER BY ranking;
+```
+</details>
+
+**Ejercicio 8 (Desafio):** Identifica los meses donde las ventas cayeron respecto al mes anterior (variacion negativa). Muestra el mes, las ventas del mes, las del mes anterior y la variacion porcentual. Ordena por la peor caida primero.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+WITH ventas_mes AS (
+  SELECT
+    DATE_TRUNC('month', fecha) AS mes,
+    SUM(total) AS total_mes
+  FROM pedidos
+  GROUP BY DATE_TRUNC('month', fecha)
+),
+con_variacion AS (
+  SELECT
+    TO_CHAR(mes, 'YYYY-MM') AS mes,
+    ROUND(total_mes, 2) AS total_mes,
+    ROUND(LAG(total_mes) OVER (ORDER BY mes), 2) AS mes_anterior,
+    ROUND(
+      (total_mes - LAG(total_mes) OVER (ORDER BY mes))
+      / LAG(total_mes) OVER (ORDER BY mes) * 100,
+      2
+    ) AS variacion_pct
+  FROM ventas_mes
+)
+SELECT *
+FROM con_variacion
+WHERE variacion_pct < 0
+ORDER BY variacion_pct ASC;
+```
+</details>

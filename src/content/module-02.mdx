@@ -1,0 +1,319 @@
+import Callout from "../components/Callout.astro"
+
+En este modulo vas a preparar tu entorno de trabajo. Al final tendras PostgreSQL funcionando, un cliente SQL listo para usar y la base de datos de practica cargada con datos. Todo lo que necesitas para seguir el resto del curso.
+
+---
+
+## Que necesitas
+
+Dos cosas:
+
+1. **Un servidor PostgreSQL** — donde viven las bases de datos
+2. **Un cliente SQL** — la herramienta donde escribes y ejecutas consultas
+
+Vamos a instalar ambos paso a paso.
+
+<Callout type="info" title="Alternativa sin instalar nada">
+  Si prefieres no instalar software, puedes usar [Neon](https://neon.tech) que ofrece PostgreSQL en la nube con un plan gratuito. Salta a la seccion "Alternativa cloud" mas abajo.
+</Callout>
+
+---
+
+## Paso 1: Instalar PostgreSQL
+
+Descarga PostgreSQL desde [postgresql.org/download](https://www.postgresql.org/download/) y sigue el instalador para tu sistema operativo.
+
+**Durante la instalacion:**
+- Te pedira crear una **contrasena** para el usuario `postgres`. Anotala en algun lugar seguro, la necesitaras para conectarte.
+- Deja el **puerto** en `5432` (es el puerto por defecto).
+- No necesitas instalar componentes adicionales como Stack Builder.
+
+<Callout type="tip" title="Verificar la instalacion">
+  En Windows, busca "SQL Shell (psql)" en el menu de inicio. En macOS/Linux, abre una terminal y escribe `psql --version`. Si ves un numero de version, la instalacion fue exitosa.
+</Callout>
+
+---
+
+## Paso 2: Instalar DBeaver Community
+
+**DBeaver** es un cliente SQL gratuito y visual. Es el que vamos a usar a lo largo del curso porque tiene una interfaz amigable, soporta multiples bases de datos y funciona en Windows, macOS y Linux.
+
+Descargalo desde [dbeaver.io/download](https://dbeaver.io/download/) e instalalo normalmente.
+
+<Callout type="info" title="Otras opciones de cliente SQL">
+  Si ya tienes experiencia, puedes usar **pgAdmin** (viene con PostgreSQL), **psql** (terminal), o cualquier otro cliente SQL. Todo lo que veremos funciona en cualquier herramienta que pueda conectarse a PostgreSQL.
+</Callout>
+
+---
+
+## Paso 3: Conectarte a PostgreSQL desde DBeaver
+
+Abre DBeaver y sigue estos pasos para crear tu primera conexion:
+
+1. Click en **Nueva Conexion** (el icono de enchufe con un signo +, arriba a la izquierda)
+2. Selecciona **PostgreSQL** en la lista y click en **Siguiente**
+3. Completa los datos de conexion:
+   - **Host**: `localhost`
+   - **Puerto**: `5432`
+   - **Database**: `postgres` (la base de datos por defecto)
+   - **Username**: `postgres`
+   - **Password**: la contrasena que creaste durante la instalacion
+4. Click en **Test Connection** para verificar que funciona
+5. Si el test es exitoso, click en **Finalizar**
+
+<Callout type="warning" title="Si la conexion falla">
+  Verifica que: (1) PostgreSQL esta corriendo como servicio, (2) el puerto es 5432, (3) la contrasena es correcta. En Windows, busca "Servicios" y verifica que "postgresql" este en estado "Ejecutando".
+</Callout>
+
+---
+
+## Paso 4: Crear la base de datos de practica
+
+A lo largo de todo el curso vamos a trabajar con la base de datos de una **tienda ficticia**. Tiene 5 tablas que simulan un sistema real de pedidos:
+
+- **productos**: los articulos que vende la tienda
+- **clientes**: las personas que compran
+- **pedidos**: cada compra realizada
+- **detalle_pedidos**: los productos dentro de cada pedido
+- **empleados**: el equipo de la tienda (con jerarquia de jefes)
+
+### Diagrama de relaciones
+
+```
+clientes ──< pedidos ──< detalle_pedidos >── productos
+empleados (jefe_id -> empleados.id)
+```
+
+Un cliente puede tener muchos pedidos. Cada pedido puede tener muchos detalles. Cada detalle referencia a un producto. Y los empleados pueden tener un jefe que tambien es empleado.
+
+### Crear la base de datos `tienda`
+
+En DBeaver:
+
+1. Click derecho en tu conexion (en el panel izquierdo) → **Crear** → **Database**
+2. Escribe `tienda` como nombre
+3. Click en **OK**
+4. Doble click en `tienda` para conectarte a ella
+
+### Crear las tablas
+
+Abre un nuevo editor SQL en DBeaver (`Ctrl+Enter` en Windows o `Cmd+Enter` en macOS, o usa el menu **SQL → Nuevo editor SQL**). Asegurate de estar conectado a la base de datos `tienda` (verifica en la barra superior del editor).
+
+Copia y ejecuta este SQL:
+
+```sql
+CREATE TABLE productos (
+    id SERIAL PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL,
+    precio DECIMAL(10,2) NOT NULL,
+    categoria VARCHAR(50),
+    stock INTEGER DEFAULT 0,
+    fecha_creacion DATE DEFAULT CURRENT_DATE
+);
+
+CREATE TABLE clientes (
+    id SERIAL PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL,
+    email VARCHAR(100) UNIQUE,
+    ciudad VARCHAR(50),
+    fecha_registro DATE DEFAULT CURRENT_DATE
+);
+
+CREATE TABLE pedidos (
+    id SERIAL PRIMARY KEY,
+    cliente_id INTEGER REFERENCES clientes(id),
+    fecha DATE DEFAULT CURRENT_DATE,
+    total DECIMAL(10,2),
+    estado VARCHAR(20) DEFAULT 'pendiente'
+);
+
+CREATE TABLE detalle_pedidos (
+    id SERIAL PRIMARY KEY,
+    pedido_id INTEGER REFERENCES pedidos(id),
+    producto_id INTEGER REFERENCES productos(id),
+    cantidad INTEGER NOT NULL,
+    precio_unitario DECIMAL(10,2) NOT NULL
+);
+
+CREATE TABLE empleados (
+    id SERIAL PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL,
+    departamento VARCHAR(50),
+    salario DECIMAL(10,2),
+    fecha_contratacion DATE DEFAULT CURRENT_DATE,
+    jefe_id INTEGER REFERENCES empleados(id)
+);
+```
+
+### Insertar los datos de prueba
+
+Ahora ejecuta este SQL para cargar los datos de ejemplo:
+
+```sql
+INSERT INTO productos (nombre, precio, categoria, stock) VALUES
+('Laptop Pro 15', 1299.99, 'Electronica', 45),
+('Mouse Inalambrico', 29.99, 'Electronica', 150),
+('Teclado Mecanico', 89.99, 'Electronica', 80),
+('Monitor 27 pulgadas', 449.99, 'Electronica', 30),
+('Auriculares Bluetooth', 59.99, 'Electronica', 200),
+('Escritorio Ajustable', 399.99, 'Muebles', 25),
+('Silla Ergonomica', 299.99, 'Muebles', 40),
+('Lampara LED', 34.99, 'Muebles', 100),
+('Mochila para Laptop', 49.99, 'Accesorios', 120),
+('Hub USB-C', 39.99, 'Accesorios', 90),
+('Webcam HD', 79.99, 'Electronica', 60),
+('Cable HDMI 2m', 12.99, 'Accesorios', 300),
+('Soporte Monitor', 44.99, 'Muebles', 55),
+('Mousepad XL', 19.99, 'Accesorios', 180),
+('Cargador Rapido', 24.99, 'Accesorios', 250);
+
+INSERT INTO clientes (nombre, email, ciudad) VALUES
+('Maria Garcia', 'maria@email.com', 'Santiago'),
+('Carlos Lopez', 'carlos@email.com', 'Valparaiso'),
+('Ana Martinez', 'ana@email.com', 'Santiago'),
+('Pedro Sanchez', 'pedro@email.com', 'Concepcion'),
+('Laura Torres', 'laura@email.com', 'Santiago'),
+('Diego Rivera', 'diego@email.com', 'Valparaiso'),
+('Carmen Ruiz', 'carmen@email.com', 'Temuco'),
+('Roberto Diaz', 'roberto@email.com', 'Santiago'),
+('Isabel Moreno', 'isabel@email.com', 'Antofagasta'),
+('Andres Vargas', 'andres@email.com', 'Concepcion');
+
+INSERT INTO pedidos (cliente_id, fecha, total, estado) VALUES
+(1, '2024-01-15', 1389.98, 'completado'),
+(2, '2024-01-20', 89.99, 'completado'),
+(3, '2024-02-01', 499.98, 'completado'),
+(1, '2024-02-14', 59.99, 'completado'),
+(4, '2024-02-28', 1749.98, 'enviado'),
+(5, '2024-03-05', 149.97, 'completado'),
+(6, '2024-03-10', 299.99, 'pendiente'),
+(3, '2024-03-15', 839.98, 'enviado'),
+(7, '2024-03-20', 34.99, 'completado'),
+(8, '2024-03-25', 479.98, 'pendiente'),
+(2, '2024-04-01', 129.98, 'completado'),
+(9, '2024-04-05', 1299.99, 'enviado'),
+(10, '2024-04-10', 69.98, 'pendiente'),
+(1, '2024-04-15', 449.99, 'completado'),
+(5, '2024-04-20', 89.99, 'completado');
+
+INSERT INTO detalle_pedidos (pedido_id, producto_id, cantidad, precio_unitario) VALUES
+(1, 1, 1, 1299.99),
+(1, 2, 3, 29.99),
+(2, 3, 1, 89.99),
+(3, 7, 1, 299.99),
+(3, 8, 2, 34.99),
+(3, 14, 1, 19.99),
+(4, 5, 1, 59.99),
+(5, 1, 1, 1299.99),
+(5, 4, 1, 449.99),
+(6, 9, 3, 49.99),
+(7, 7, 1, 299.99),
+(8, 4, 1, 449.99),
+(8, 10, 2, 39.99),
+(8, 3, 1, 89.99),
+(9, 8, 1, 34.99),
+(10, 11, 1, 79.99),
+(10, 6, 1, 399.99),
+(11, 2, 1, 29.99),
+(11, 14, 5, 19.99),
+(12, 1, 1, 1299.99),
+(13, 12, 2, 12.99),
+(13, 15, 1, 24.99),
+(14, 4, 1, 449.99),
+(15, 3, 1, 89.99);
+
+INSERT INTO empleados (nombre, departamento, salario, fecha_contratacion, jefe_id) VALUES
+('Sofia Mendez', 'Gerencia', 85000, '2020-01-15', NULL),
+('Juan Perez', 'Ventas', 45000, '2021-03-01', 1),
+('Valentina Castro', 'Ventas', 42000, '2021-06-15', 1),
+('Miguel Angel Torres', 'Tecnologia', 62000, '2020-08-01', 1),
+('Camila Rojas', 'Tecnologia', 55000, '2022-01-10', 4),
+('Alejandro Vega', 'Tecnologia', 58000, '2021-11-20', 4),
+('Fernanda Luna', 'Ventas', 40000, '2023-02-01', 2),
+('Ricardo Soto', 'Soporte', 38000, '2022-07-15', 4),
+('Patricia Herrera', 'Soporte', 36000, '2023-05-01', 8),
+('Daniela Flores', 'Ventas', 41000, '2023-08-10', 2);
+```
+
+<Callout type="tip" title="Atajo: usa el script del repositorio">
+  Si clonaste el repositorio del curso, el script completo esta en `db/init.sql`. Puedes abrirlo directamente en DBeaver con **Archivo → Abrir archivo** y ejecutarlo. Es mas rapido que copiar y pegar.
+</Callout>
+
+### Verificar que todo funciona
+
+Ejecuta estas consultas para confirmar que los datos se cargaron correctamente:
+
+```sql
+SELECT COUNT(*) FROM productos;   -- Deberia devolver: 15
+SELECT COUNT(*) FROM clientes;    -- Deberia devolver: 10
+SELECT COUNT(*) FROM pedidos;     -- Deberia devolver: 15
+SELECT COUNT(*) FROM detalle_pedidos; -- Deberia devolver: 24
+SELECT COUNT(*) FROM empleados;   -- Deberia devolver: 10
+```
+
+Si todos los numeros coinciden, estas listo para empezar.
+
+---
+
+## Alternativa cloud: Neon (sin instalar nada)
+
+Si prefieres no instalar software en tu maquina, puedes usar [Neon](https://neon.tech) que ofrece PostgreSQL serverless con un plan gratuito:
+
+1. Crea una cuenta en [neon.tech](https://neon.tech)
+2. Crea un nuevo proyecto (te genera una base de datos PostgreSQL automaticamente)
+3. En el dashboard, ve al **SQL Editor**
+4. Copia y ejecuta el mismo SQL de arriba (CREATE TABLE + INSERT) en el editor
+
+Neon incluye un editor SQL integrado en el navegador, asi que no necesitas instalar ningun cliente adicional.
+
+<Callout type="info">
+  No importa cual opcion elijas. Lo que importa es que puedas ejecutar consultas SQL. Todo lo que veremos en este curso funciona igual en ambas opciones.
+</Callout>
+
+---
+
+## Conociendo DBeaver (opcional)
+
+Si instalaste DBeaver, estas son las funciones que mas vas a usar:
+
+- **Editor SQL**: donde escribes y ejecutas consultas. Atajo: `Ctrl+Enter` (ejecutar todo) o selecciona una parte y presiona `Ctrl+Enter` para ejecutar solo esa parte.
+- **Panel de resultados**: debajo del editor, muestra los resultados de tu ultima consulta en formato de tabla.
+- **Panel de navegacion** (izquierda): muestra tus conexiones, bases de datos, tablas y columnas. Puedes explorar la estructura de la base de datos sin escribir SQL.
+- **Multiples pestanas**: puedes tener varios editores SQL abiertos al mismo tiempo.
+
+<Callout type="tip" title="Atajo util">
+  Selecciona solo una parte del SQL y presiona `Ctrl+Enter` para ejecutar unicamente esa porcion. Esto es muy util cuando tienes varias consultas en el mismo editor y quieres probar una a la vez.
+</Callout>
+
+---
+
+## ¿Que sigue?
+
+Con el entorno listo y la base de datos cargada, en el proximo modulo vas a escribir tu primera consulta con `SELECT`. Vamos a explorar como pedirle datos a las tablas, eligiendo columnas, creando alias y haciendo calculos simples. ¡Vamos!
+
+---
+
+### Ejercicios
+
+**Ejercicio 1**: Verifica que tu entorno esta correctamente configurado ejecutando:
+
+```sql
+SELECT COUNT(*) FROM clientes;
+SELECT COUNT(*) FROM productos;
+SELECT COUNT(*) FROM pedidos;
+```
+
+¿Cuantos registros tiene cada tabla?
+
+**Ejercicio 2**: Ejecuta esta consulta y observa el resultado. No necesitas entenderla completamente aun, solo ejecutala:
+
+```sql
+SELECT nombre, precio
+FROM productos
+WHERE categoria = 'Electronica'
+ORDER BY precio DESC;
+```
+
+¿Que crees que hace? Intenta describirlo con tus propias palabras.
+
+**Ejercicio 3**: Modifica la consulta anterior cambiando `'Electronica'` por `'Muebles'`. ¿Que resultado obtienes?

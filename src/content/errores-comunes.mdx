@@ -1,0 +1,478 @@
+import Callout from "../components/Callout.astro"
+import CommandTable from "../components/CommandTable.astro"
+
+Todos cometemos errores con SQL. La diferencia entre un principiante y alguien con experiencia no es que el segundo no cometa errores, sino que los reconoce mas rapido. Aqui tienes los errores mas comunes que vas a encontrar (o que ya encontraste) con sus soluciones.
+
+---
+
+### 1. Columna no encontrada (typos y alias incorrectos)
+
+**El error:**
+
+```sql
+SELECT nmobre, precio FROM productos;
+```
+
+```
+ERROR: column "nmobre" does not exist
+HINT: Perhaps you meant to reference the column "productos.nombre".
+```
+
+**Por que pasa:** Un simple typo. Tambien pasa cuando usas un alias de tabla y te equivocas en la referencia:
+
+```sql
+SELECT c.nombre, p.total
+FROM clientes AS cli
+JOIN pedidos AS ped ON cli.id = ped.cliente_id;
+-- Error: "c" no existe, definiste "cli"
+```
+
+**Como solucionarlo:** Revisa la ortografia. Si usas alias, se consistente. PostgreSQL te da una pista ("Perhaps you meant..."), leela.
+
+```sql
+-- Correcto
+SELECT cli.nombre, ped.total
+FROM clientes AS cli
+JOIN pedidos AS ped ON cli.id = ped.cliente_id;
+```
+
+<Callout type="tip">
+Usa alias cortos pero descriptivos. `c` para clientes, `p` para pedidos, `dp` para detalle_pedidos. Y una vez que defines el alias, usa **solo** el alias, nunca mezcles con el nombre original de la tabla.
+</Callout>
+
+---
+
+### 2. Funcion de agregacion sin GROUP BY
+
+**El error:**
+
+```sql
+SELECT categoria, COUNT(*)
+FROM productos;
+```
+
+```
+ERROR: column "productos.categoria" must appear in the GROUP BY clause
+or be used in an aggregate function
+```
+
+**Por que pasa:** Estas mezclando una columna normal (`categoria`) con una funcion de agregacion (`COUNT(*)`). SQL no sabe como combinar valores individuales con valores agregados sin un GROUP BY.
+
+Piensalo asi: COUNT(*) devuelve UN numero. Pero `categoria` tiene muchos valores. Como los emparejas?
+
+**Como solucionarlo:** Agrega GROUP BY con todas las columnas no agregadas:
+
+```sql
+SELECT categoria, COUNT(*)
+FROM productos
+GROUP BY categoria;
+```
+
+---
+
+### 3. Usar WHERE en vez de HAVING con agregados
+
+**El error:**
+
+```sql
+SELECT categoria, AVG(precio) AS precio_promedio
+FROM productos
+GROUP BY categoria
+WHERE AVG(precio) > 100;
+```
+
+```
+ERROR: syntax error at or near "WHERE"
+```
+
+**Por que pasa:** `WHERE` filtra filas **antes** de la agregacion. No puedes usar funciones de agregacion en WHERE porque los grupos todavia no existen en ese momento. Es como intentar saber el promedio de la clase antes de recoger los examenes.
+
+**Como solucionarlo:** Usa `HAVING` para filtrar **despues** de la agregacion:
+
+```sql
+SELECT categoria, AVG(precio) AS precio_promedio
+FROM productos
+GROUP BY categoria
+HAVING AVG(precio) > 100;
+```
+
+<CommandTable commands={[
+  { command: "WHERE", description: "Filtra filas **antes** de agrupar. No permite funciones de agregacion." },
+  { command: "HAVING", description: "Filtra grupos **despues** de agrupar. Si permite funciones de agregacion." },
+]} />
+
+---
+
+### 4. Olvidar la condicion de JOIN (producto cartesiano)
+
+**El error:**
+
+```sql
+SELECT c.nombre, p.total
+FROM clientes c, pedidos p;
+```
+
+**No da error**, pero devuelve **muchas mas filas de las esperadas**. Si tienes 100 clientes y 1,000 pedidos, esta consulta devuelve 100,000 filas (cada cliente combinado con cada pedido).
+
+**Por que pasa:** Sin una condicion de JOIN, SQL combina cada fila de una tabla con cada fila de la otra. Es un producto cartesiano y casi nunca es lo que quieres.
+
+**Como solucionarlo:** Siempre usa JOIN explicito con la condicion ON:
+
+```sql
+-- Correcto
+SELECT c.nombre, p.total
+FROM clientes c
+JOIN pedidos p ON c.id = p.cliente_id;
+```
+
+<Callout type="warning" title="Senal de alerta">
+Si una consulta devuelve muchas mas filas de las esperadas, lo primero que debes revisar es si olvidaste una condicion de JOIN o si tus JOINs estan generando duplicados.
+</Callout>
+
+---
+
+### 5. UPDATE o DELETE sin WHERE
+
+**El error:**
+
+```sql
+-- Querias actualizar UN producto...
+UPDATE productos SET precio = 99.99;
+
+-- ...pero actualizaste TODOS los productos
+```
+
+**Por que pasa:** Sin WHERE, la operacion se aplica a **toda la tabla**. No hay mensaje de error; SQL hace exactamente lo que le pediste.
+
+**Como solucionarlo:** SIEMPRE revisa tu WHERE antes de ejecutar UPDATE o DELETE. Mejor aun, primero haz un SELECT con la misma condicion para verificar que afectas las filas correctas:
+
+```sql
+-- Paso 1: Verificar que filas afectas
+SELECT * FROM productos WHERE id = 42;
+
+-- Paso 2: Solo si el SELECT muestra lo correcto, ejecutar el UPDATE
+UPDATE productos SET precio = 99.99 WHERE id = 42;
+```
+
+<Callout type="warning" title="Regla de supervivencia">
+Antes de ejecutar un UPDATE o DELETE, **siempre** convierte la consulta en SELECT primero para ver que filas va a afectar. Y si trabajas con datos de produccion, envuelve todo en una transaccion:
+
+```sql
+BEGIN;
+UPDATE productos SET precio = 99.99 WHERE id = 42;
+-- Revisa el resultado...
+-- Si esta bien: COMMIT;
+-- Si algo salio mal: ROLLBACK;
+```
+</Callout>
+
+---
+
+### 6. Comparar con NULL usando = en vez de IS NULL
+
+**El error:**
+
+```sql
+SELECT * FROM empleados WHERE jefe_id = NULL;
+```
+
+Esta consulta **no devuelve ninguna fila**, aunque hay empleados sin jefe.
+
+**Por que pasa:** En SQL, `NULL` no es un valor, es la **ausencia** de valor. Nada es "igual" a NULL, ni siquiera NULL mismo. La expresion `NULL = NULL` devuelve `NULL` (no TRUE).
+
+**Como solucionarlo:** Usa `IS NULL` o `IS NOT NULL`:
+
+```sql
+-- Correcto: encontrar empleados sin jefe
+SELECT * FROM empleados WHERE jefe_id IS NULL;
+
+-- Correcto: encontrar empleados CON jefe
+SELECT * FROM empleados WHERE jefe_id IS NOT NULL;
+```
+
+Esto tambien aplica a las comparaciones con `!=` o `<>`:
+
+```sql
+-- Esto NO devuelve filas donde jefe_id es NULL
+SELECT * FROM empleados WHERE jefe_id != 5;
+
+-- Si quieres incluir los NULL, se explicito:
+SELECT * FROM empleados WHERE jefe_id != 5 OR jefe_id IS NULL;
+```
+
+---
+
+### 7. GROUP BY con columnas faltantes
+
+**El error:**
+
+```sql
+SELECT c.nombre, c.email, c.ciudad, COUNT(p.id)
+FROM clientes c
+JOIN pedidos p ON c.id = p.cliente_id
+GROUP BY c.nombre;
+```
+
+```
+ERROR: column "c.email" must appear in the GROUP BY clause
+or be used in an aggregate function
+```
+
+**Por que pasa:** Cada columna en el SELECT que no esta dentro de una funcion de agregacion **debe** aparecer en el GROUP BY. PostgreSQL es estricto con esto (otros motores como MySQL son mas permisivos, lo cual puede dar resultados impredecibles).
+
+**Como solucionarlo:** Agrega todas las columnas no agregadas al GROUP BY:
+
+```sql
+SELECT c.nombre, c.email, c.ciudad, COUNT(p.id)
+FROM clientes c
+JOIN pedidos p ON c.id = p.cliente_id
+GROUP BY c.nombre, c.email, c.ciudad;
+```
+
+O, si quieres agrupar solo por una columna pero mostrar las demas, asegurate de que las columnas extra dependan funcionalmente de la columna agrupada (por ejemplo, si agrupas por `c.id` que es PRIMARY KEY, PostgreSQL permite las demas columnas de esa tabla):
+
+```sql
+-- Esto SI funciona porque id es PRIMARY KEY
+SELECT c.id, c.nombre, c.email, c.ciudad, COUNT(p.id)
+FROM clientes c
+JOIN pedidos p ON c.id = p.cliente_id
+GROUP BY c.id;
+```
+
+---
+
+### 8. Referencia ambigua a columnas
+
+**El error:**
+
+```sql
+SELECT id, nombre, total
+FROM clientes c
+JOIN pedidos p ON c.id = p.cliente_id;
+```
+
+```
+ERROR: column reference "id" is ambiguous
+```
+
+**Por que pasa:** Ambas tablas tienen una columna llamada `id`. SQL no sabe si te refieres a `clientes.id` o `pedidos.id`.
+
+**Como solucionarlo:** Califica siempre las columnas con el nombre o alias de la tabla cuando haces JOIN:
+
+```sql
+SELECT c.id, c.nombre, p.total
+FROM clientes c
+JOIN pedidos p ON c.id = p.cliente_id;
+```
+
+<Callout type="tip">
+Como regla, cuando tu consulta tiene mas de una tabla, **siempre** usa el alias de tabla como prefijo en todas las columnas. Aunque no sea ambigua, hace la consulta mucho mas legible.
+</Callout>
+
+---
+
+### 9. Comparar strings con numeros
+
+**El error:**
+
+```sql
+-- La columna 'precio' es NUMERIC, pero comparas con un string
+SELECT * FROM productos WHERE precio = '100';
+```
+
+En PostgreSQL esto **funciona** la mayoria de las veces porque hace conversion implicita. Pero puede fallar con tipos mas complejos o causar problemas de rendimiento:
+
+```sql
+-- Esto puede impedir el uso de indices y dar resultados inesperados
+SELECT * FROM clientes WHERE id = '42abc';
+```
+
+```
+ERROR: invalid input syntax for type integer: "42abc"
+```
+
+**Por que pasa:** PostgreSQL intenta convertir el string a numero, y si el string no es un numero valido, falla.
+
+**Como solucionarlo:** Usa siempre el tipo de dato correcto:
+
+```sql
+-- Correcto: numeros sin comillas
+SELECT * FROM productos WHERE precio = 100;
+SELECT * FROM clientes WHERE id = 42;
+
+-- Correcto: strings con comillas simples
+SELECT * FROM clientes WHERE email = 'ana@mail.com';
+```
+
+---
+
+### 10. La trampa de rendimiento de OFFSET
+
+**El error:**
+
+```sql
+-- Pagina 1: rapido
+SELECT * FROM productos ORDER BY id LIMIT 20 OFFSET 0;
+
+-- Pagina 500: lento
+SELECT * FROM productos ORDER BY id LIMIT 20 OFFSET 10000;
+```
+
+**Por que pasa:** `OFFSET 10000` no "salta" magicamente a la fila 10,000. PostgreSQL **lee y descarta** las primeras 10,000 filas. Cuanto mayor es el OFFSET, mas trabajo desperdiciado. En tablas grandes, las paginas finales pueden ser muy lentas.
+
+**Como solucionarlo:** Usa paginacion basada en cursor (keyset pagination):
+
+```sql
+-- En vez de OFFSET, usa WHERE con el ultimo valor visto
+-- Si la ultima fila de la pagina anterior tenia id = 10000:
+SELECT * FROM productos
+WHERE id > 10000
+ORDER BY id
+LIMIT 20;
+```
+
+Esta tecnica es **O(log n)** con un indice en `id`, mientras que OFFSET es **O(n)**.
+
+<Callout type="performance">
+Para APIs con paginacion, prefiere siempre keyset pagination sobre OFFSET. La diferencia se hace enorme en tablas con millones de filas. Pagina 1 y pagina 50,000 tardan lo mismo con keyset pagination.
+</Callout>
+
+---
+
+### 11. Usar SELECT * en produccion
+
+**El error:**
+
+```sql
+SELECT * FROM clientes c
+JOIN pedidos p ON c.id = p.cliente_id
+JOIN detalle_pedidos dp ON p.id = dp.pedido_id
+JOIN productos pr ON dp.producto_id = pr.id;
+```
+
+**Por que pasa:** Parece comodo, pero trae TODAS las columnas de TODAS las tablas. Problemas:
+
+1. **Rendimiento**: Transfiere muchos mas datos de los necesarios.
+2. **Impide Index Only Scan**: No puede usar solo el indice si necesita todas las columnas.
+3. **Fragilidad**: Si alguien agrega una columna a la tabla, tu aplicacion puede romperse.
+4. **Confuso**: Cuando dos tablas tienen columnas con el mismo nombre (como `id`), no sabes cual es cual.
+
+**Como solucionarlo:** Nombra siempre las columnas que necesitas:
+
+```sql
+SELECT
+    c.nombre AS cliente,
+    p.fecha,
+    pr.nombre AS producto,
+    dp.cantidad,
+    dp.precio_unitario
+FROM clientes c
+JOIN pedidos p ON c.id = p.cliente_id
+JOIN detalle_pedidos dp ON p.id = dp.pedido_id
+JOIN productos pr ON dp.producto_id = pr.id;
+```
+
+---
+
+### 12. No crear indices donde se necesitan
+
+**El error:**
+
+```sql
+-- Esta consulta se ejecuta 1,000 veces por minuto en tu aplicacion
+SELECT * FROM pedidos WHERE cliente_id = 42 AND estado = 'pendiente';
+```
+
+Y nunca creaste un indice en `cliente_id` ni en `estado`. Cada ejecucion hace un Sequential Scan completo.
+
+**Por que pasa:** Los indices no se crean solos (excepto para PRIMARY KEY y UNIQUE). Si no los creas explicitamente, no existen.
+
+**Como detectarlo y solucionarlo:**
+
+```sql
+-- Paso 1: Verificar que hay un Seq Scan
+EXPLAIN ANALYZE SELECT * FROM pedidos
+WHERE cliente_id = 42 AND estado = 'pendiente';
+
+-- Paso 2: Crear el indice apropiado
+CREATE INDEX idx_pedidos_cliente_estado ON pedidos(cliente_id, estado);
+
+-- Paso 3: Verificar la mejora
+EXPLAIN ANALYZE SELECT * FROM pedidos
+WHERE cliente_id = 42 AND estado = 'pendiente';
+```
+
+<Callout type="info" title="Como encontrar indices faltantes">
+PostgreSQL puede decirte que tablas tienen mas Sequential Scans de los deseados:
+
+```sql
+SELECT
+    relname AS tabla,
+    seq_scan,
+    idx_scan,
+    seq_scan - idx_scan AS diferencia
+FROM pg_stat_user_tables
+WHERE seq_scan > idx_scan
+ORDER BY diferencia DESC;
+```
+
+Las tablas con muchos mas `seq_scan` que `idx_scan` son candidatas a necesitar indices.
+</Callout>
+
+---
+
+### 13. Usar DISTINCT para "arreglar" duplicados
+
+**El error:**
+
+```sql
+-- "Tengo duplicados, le pongo DISTINCT y listo"
+SELECT DISTINCT c.nombre, p.total
+FROM clientes c
+JOIN pedidos p ON c.id = p.cliente_id
+JOIN detalle_pedidos dp ON p.id = dp.pedido_id;
+```
+
+**Por que pasa:** Si tu consulta devuelve duplicados inesperados, el problema casi siempre es un JOIN incorrecto o faltante, no la falta de DISTINCT. DISTINCT es como poner una curita sobre una herida que necesita puntos.
+
+En este caso, hay duplicados porque cada pedido puede tener multiples detalles, y el JOIN multiplica las filas del pedido por cada detalle.
+
+**Como solucionarlo:** Analiza **por que** hay duplicados y arregla la causa raiz:
+
+```sql
+-- Si quieres datos de clientes y pedidos (sin detalles), quita el JOIN extra
+SELECT c.nombre, p.total
+FROM clientes c
+JOIN pedidos p ON c.id = p.cliente_id;
+
+-- Si necesitas datos de detalles, agrega GROUP BY o reformula la consulta
+SELECT c.nombre, p.total, SUM(dp.cantidad) AS items_totales
+FROM clientes c
+JOIN pedidos p ON c.id = p.cliente_id
+JOIN detalle_pedidos dp ON p.id = dp.pedido_id
+GROUP BY c.nombre, p.total;
+```
+
+<Callout type="warning">
+Si te encuentras usando DISTINCT y no puedes explicar por que hay duplicados, detente. Revisa tus JOINs. El DISTINCT esconde el problema y ademas es costoso: PostgreSQL tiene que ordenar o hacer hash de todas las filas para eliminar duplicados.
+</Callout>
+
+---
+
+### Resumen rapido
+
+<CommandTable commands={[
+  { command: "Column not found", description: "Revisa typos y que los alias coincidan" },
+  { command: "Agregacion sin GROUP BY", description: "Agrega GROUP BY con todas las columnas no agregadas" },
+  { command: "WHERE con agregados", description: "Usa HAVING en vez de WHERE" },
+  { command: "Producto cartesiano", description: "Agrega la condicion ON al JOIN" },
+  { command: "UPDATE/DELETE sin WHERE", description: "Primero haz SELECT para verificar" },
+  { command: "Comparar con NULL", description: "Usa IS NULL o IS NOT NULL" },
+  { command: "GROUP BY incompleto", description: "Agrega todas las columnas del SELECT al GROUP BY" },
+  { command: "Columna ambigua", description: "Prefija con el alias de tabla" },
+  { command: "Tipo de dato incorrecto", description: "Numeros sin comillas, strings con comillas simples" },
+  { command: "OFFSET lento", description: "Usa keyset pagination (WHERE id > ultimo)" },
+  { command: "SELECT *", description: "Nombra las columnas que necesitas" },
+  { command: "Sin indices", description: "Usa EXPLAIN y crea indices en columnas del WHERE y JOIN" },
+  { command: "DISTINCT innecesario", description: "Arregla la causa raiz de los duplicados" },
+]} />

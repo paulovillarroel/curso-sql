@@ -1,0 +1,352 @@
+import Callout from "../components/Callout.astro"
+import CommandTable from "../components/CommandTable.astro"
+
+Referencia rapida de todo lo que aprendiste en el curso. Guardala para consultarla cuando necesites recordar sintaxis.
+
+---
+
+### Estructura basica de SELECT
+
+```sql
+SELECT columnas              -- Que columnas quieres
+FROM tabla                   -- De que tabla
+WHERE condicion              -- Filtrar filas (antes de agrupar)
+GROUP BY columnas            -- Agrupar filas
+HAVING condicion_agregada    -- Filtrar grupos (despues de agrupar)
+ORDER BY columna [ASC|DESC]  -- Ordenar resultados
+LIMIT n                      -- Limitar cantidad de filas
+OFFSET n;                    -- Saltar filas (evitar en produccion)
+```
+
+**Orden de ejecucion** (no es el orden en que lo escribes):
+
+1. `FROM` / `JOIN` -- Obtener tablas
+2. `WHERE` -- Filtrar filas
+3. `GROUP BY` -- Agrupar
+4. `HAVING` -- Filtrar grupos
+5. `SELECT` -- Elegir columnas
+6. `ORDER BY` -- Ordenar
+7. `LIMIT` / `OFFSET` -- Paginar
+
+---
+
+### Operadores WHERE
+
+<CommandTable commands={[
+  { command: "=, !=, <>, <, >, <=, >=", description: "WHERE precio > 100" },
+  { command: "BETWEEN ... AND ...", description: "WHERE precio BETWEEN 10 AND 50" },
+  { command: "IN (...)", description: "WHERE ciudad IN ('Madrid', 'Lima')" },
+  { command: "NOT IN (...)", description: "WHERE estado NOT IN ('cancelado')" },
+  { command: "LIKE / ILIKE", description: "WHERE nombre LIKE 'Ana%' (ILIKE = sin mayusculas)" },
+  { command: "IS NULL / IS NOT NULL", description: "WHERE jefe_id IS NULL" },
+  { command: "AND, OR, NOT", description: "WHERE precio > 100 AND stock > 0" },
+  { command: "EXISTS (subconsulta)", description: "WHERE EXISTS (SELECT 1 FROM pedidos ...)" },
+]} />
+
+---
+
+### JOINs
+
+```
+-- INNER JOIN: Solo filas con coincidencia en ambas tablas
+    Tabla A       Tabla B
+   +-------+     +-------+
+   |       |     |       |
+   |   [###|#####|###]   |     ### = resultado
+   |       |     |       |
+   +-------+     +-------+
+
+-- LEFT JOIN: Todas las filas de A + coincidencias de B
+    Tabla A       Tabla B
+   +-------+     +-------+
+   |       |     |       |
+   |[######|#####|###]   |     ### = resultado
+   |       |     |       |
+   +-------+     +-------+
+
+-- RIGHT JOIN: Coincidencias de A + todas las filas de B
+    Tabla A       Tabla B
+   +-------+     +-------+
+   |       |     |       |
+   |   [###|#####|######]|     ### = resultado
+   |       |     |       |
+   +-------+     +-------+
+
+-- FULL OUTER JOIN: Todas las filas de ambas tablas
+    Tabla A       Tabla B
+   +-------+     +-------+
+   |       |     |       |
+   |[######|#####|######]|     ### = resultado
+   |       |     |       |
+   +-------+     +-------+
+```
+
+```sql
+-- INNER JOIN
+SELECT c.nombre, p.total
+FROM clientes c
+JOIN pedidos p ON c.id = p.cliente_id;
+
+-- LEFT JOIN (incluye clientes sin pedidos)
+SELECT c.nombre, p.total
+FROM clientes c
+LEFT JOIN pedidos p ON c.id = p.cliente_id;
+
+-- Self JOIN (tabla consigo misma)
+SELECT e.nombre AS empleado, j.nombre AS jefe
+FROM empleados e
+LEFT JOIN empleados j ON e.jefe_id = j.id;
+```
+
+---
+
+### Funciones de agregacion
+
+<CommandTable commands={[
+  { command: "COUNT(*)", description: "Cuenta todas las filas (incluyendo NULL)" },
+  { command: "COUNT(columna)", description: "Cuenta filas donde la columna no es NULL" },
+  { command: "COUNT(DISTINCT columna)", description: "Cuenta valores unicos no NULL" },
+  { command: "SUM(columna)", description: "Suma de valores" },
+  { command: "AVG(columna)", description: "Promedio (ignora NULL)" },
+  { command: "MIN(columna)", description: "Valor minimo" },
+  { command: "MAX(columna)", description: "Valor maximo" },
+]} />
+
+```sql
+SELECT
+    categoria,
+    COUNT(*) AS total,
+    ROUND(AVG(precio), 2) AS precio_promedio,
+    MIN(precio) AS mas_barato,
+    MAX(precio) AS mas_caro
+FROM productos
+GROUP BY categoria;
+```
+
+---
+
+### Funciones de string
+
+<CommandTable commands={[
+  { command: "UPPER('hola')", description: "HOLA" },
+  { command: "LOWER('HOLA')", description: "hola" },
+  { command: "LENGTH('hola')", description: "4" },
+  { command: "TRIM('  hola  ')", description: "hola" },
+  { command: "CONCAT('a', 'b', 'c')", description: "abc" },
+  { command: "'hola' || ' mundo'", description: "hola mundo" },
+  { command: "SUBSTRING('hola' FROM 1 FOR 2)", description: "ho" },
+  { command: "REPLACE('hola', 'o', 'a')", description: "hala" },
+  { command: "LEFT('hola', 2)", description: "ho" },
+  { command: "RIGHT('hola', 2)", description: "la" },
+]} />
+
+---
+
+### Funciones de fecha
+
+<CommandTable commands={[
+  { command: "CURRENT_DATE", description: "Fecha de hoy (sin hora)" },
+  { command: "CURRENT_TIMESTAMP / NOW()", description: "Fecha y hora actual" },
+  { command: "EXTRACT(YEAR FROM fecha)", description: "Extrae el ano (tambien MONTH, DAY, etc.)" },
+  { command: "DATE_TRUNC('month', fecha)", description: "Trunca al inicio del mes" },
+  { command: "AGE(fecha)", description: "Intervalo desde fecha hasta hoy" },
+  { command: "fecha + INTERVAL '30 days'", description: "Suma 30 dias a la fecha" },
+  { command: "TO_CHAR(fecha, 'DD/MM/YYYY')", description: "Formatea fecha como texto" },
+]} />
+
+```sql
+-- Pedidos de los ultimos 30 dias
+SELECT * FROM pedidos
+WHERE fecha >= CURRENT_DATE - INTERVAL '30 days';
+
+-- Agrupar por mes
+SELECT DATE_TRUNC('month', fecha) AS mes, COUNT(*)
+FROM pedidos
+GROUP BY DATE_TRUNC('month', fecha);
+```
+
+---
+
+### Subconsultas
+
+```sql
+-- En WHERE (escalar)
+SELECT * FROM productos
+WHERE precio > (SELECT AVG(precio) FROM productos);
+
+-- En WHERE (lista)
+SELECT * FROM clientes
+WHERE id IN (SELECT cliente_id FROM pedidos WHERE total > 500);
+
+-- En FROM (tabla derivada)
+SELECT categoria, promedio
+FROM (
+    SELECT categoria, AVG(precio) AS promedio
+    FROM productos GROUP BY categoria
+) AS sub
+WHERE promedio > 100;
+
+-- Subconsulta correlacionada
+SELECT * FROM clientes c
+WHERE EXISTS (
+    SELECT 1 FROM pedidos p
+    WHERE p.cliente_id = c.id AND p.total > 1000
+);
+```
+
+---
+
+### CTEs (Common Table Expressions)
+
+```sql
+-- CTE basico
+WITH pedidos_grandes AS (
+    SELECT cliente_id, SUM(total) AS gasto
+    FROM pedidos
+    GROUP BY cliente_id
+    HAVING SUM(total) > 5000
+)
+SELECT c.nombre, pg.gasto
+FROM clientes c
+JOIN pedidos_grandes pg ON c.id = pg.cliente_id;
+
+-- Multiples CTEs
+WITH
+ventas AS (
+    SELECT producto_id, SUM(cantidad) AS total_vendido
+    FROM detalle_pedidos
+    GROUP BY producto_id
+),
+top_productos AS (
+    SELECT producto_id, total_vendido
+    FROM ventas
+    ORDER BY total_vendido DESC
+    LIMIT 10
+)
+SELECT p.nombre, tp.total_vendido
+FROM productos p
+JOIN top_productos tp ON p.id = tp.producto_id;
+
+-- CTE recursiva (para jerarquias)
+WITH RECURSIVE jerarquia AS (
+    SELECT id, nombre, jefe_id, 1 AS nivel
+    FROM empleados WHERE jefe_id IS NULL
+    UNION ALL
+    SELECT e.id, e.nombre, e.jefe_id, j.nivel + 1
+    FROM empleados e
+    JOIN jerarquia j ON e.jefe_id = j.id
+)
+SELECT * FROM jerarquia ORDER BY nivel;
+```
+
+---
+
+### Modificacion de datos
+
+```sql
+-- INSERT
+INSERT INTO productos (nombre, precio, categoria, stock)
+VALUES ('Laptop Pro', 1299.99, 'Electronica', 50);
+
+-- INSERT multiple
+INSERT INTO productos (nombre, precio, categoria, stock) VALUES
+    ('Mouse', 29.99, 'Electronica', 200),
+    ('Teclado', 59.99, 'Electronica', 150);
+
+-- UPDATE
+UPDATE productos SET precio = precio * 0.9
+WHERE categoria = 'Electronica' AND stock > 100;
+
+-- DELETE
+DELETE FROM pedidos WHERE estado = 'cancelado' AND fecha < '2023-01-01';
+```
+
+---
+
+### EXPLAIN: Guia rapida de lectura
+
+```sql
+EXPLAIN ANALYZE SELECT ...;
+```
+
+<CommandTable commands={[
+  { command: "Seq Scan", description: "Lee toda la tabla. Normal en tablas chicas, lento en grandes." },
+  { command: "Index Scan", description: "Usa un indice para encontrar filas. Rapido." },
+  { command: "Index Only Scan", description: "Todo esta en el indice, no va a la tabla. Lo mas rapido." },
+  { command: "Bitmap Index Scan", description: "Crea mapa de bits con el indice, luego lee paginas." },
+  { command: "Nested Loop", description: "Para cada fila de A, busca en B. Bueno con tablas chicas o indices." },
+  { command: "Hash Join", description: "Crea hash de tabla chica, recorre tabla grande. Bueno sin indice." },
+  { command: "Merge Join", description: "Ordena ambas tablas y las recorre en paralelo." },
+  { command: "Sort", description: "Ordena resultados (ORDER BY sin indice)." },
+  { command: "HashAggregate", description: "Agrupacion usando tabla hash (GROUP BY)." },
+]} />
+
+Que mirar en el plan:
+
+```
+Seq Scan on productos  (cost=0.00..25.00 rows=1000 width=64)
+                       (actual time=0.01..0.32 rows=987 loops=1)
+```
+
+- **cost**: Estimado por el planificador (inicio..total)
+- **rows**: Filas estimadas vs. reales (actual)
+- **time**: Tiempo real en milisegundos
+- **loops**: Cuantas veces se ejecuto este nodo
+
+---
+
+### Indices
+
+```sql
+-- Crear indice simple
+CREATE INDEX idx_nombre ON tabla(columna);
+
+-- Indice compuesto (orden importa)
+CREATE INDEX idx_nombre ON tabla(col1, col2);
+
+-- Indice unico
+CREATE UNIQUE INDEX idx_nombre ON tabla(columna);
+
+-- Indice con INCLUDE (covering index)
+CREATE INDEX idx_nombre ON tabla(col_filtro) INCLUDE (col_select);
+
+-- Indice parcial (solo algunas filas)
+CREATE INDEX idx_nombre ON tabla(columna) WHERE condicion;
+
+-- Eliminar indice
+DROP INDEX idx_nombre;
+
+-- Ver indices existentes
+SELECT indexname, indexdef
+FROM pg_indexes
+WHERE tablename = 'mi_tabla';
+```
+
+<Callout type="performance" title="Cuando crear indices">
+- Columnas frecuentes en WHERE y JOIN ON
+- Columnas en ORDER BY (si usas LIMIT)
+- Columnas en GROUP BY con tablas grandes
+- NO en tablas con pocas filas
+- NO en columnas que se actualizan constantemente
+</Callout>
+
+---
+
+### Tablas de la base de datos de practica
+
+```sql
+-- productos
+-- id | nombre | precio | categoria | stock | fecha_creacion
+
+-- clientes
+-- id | nombre | email | ciudad | fecha_registro
+
+-- pedidos
+-- id | cliente_id | fecha | total | estado
+
+-- detalle_pedidos
+-- id | pedido_id | producto_id | cantidad | precio_unitario
+
+-- empleados
+-- id | nombre | departamento | salario | fecha_contratacion | jefe_id
+```

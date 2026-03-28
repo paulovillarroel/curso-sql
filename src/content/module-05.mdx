@@ -1,0 +1,359 @@
+import Callout from "../components/Callout.astro"
+
+Hasta ahora sabemos seleccionar columnas y filtrar filas. Pero los resultados nos llegan en cualquier orden. En este modulo vamos a aprender a **ordenar** los resultados y a **paginarlos** para no traer todo de golpe.
+
+---
+
+## ORDER BY: Ordenando resultados
+
+Por defecto, SQL **no garantiza** ningun orden en los resultados. Si quieres un orden especifico, debes pedirlo explicitamente con `ORDER BY`.
+
+```sql
+SELECT nombre, precio
+FROM productos
+ORDER BY precio;
+```
+
+Esto te devuelve los productos ordenados por precio de **menor a mayor** (ascendente). Es el comportamiento por defecto.
+
+### ASC y DESC
+
+Puedes ser explicito con la direccion del ordenamiento:
+
+```sql
+-- Ascendente (por defecto)
+SELECT nombre, precio
+FROM productos
+ORDER BY precio ASC;
+
+-- Descendente: del mas caro al mas barato
+SELECT nombre, precio
+FROM productos
+ORDER BY precio DESC;
+```
+
+Un ejemplo practico: quieres ver los clientes mas recientes primero.
+
+```sql
+SELECT nombre, email, fecha_registro
+FROM clientes
+ORDER BY fecha_registro DESC;
+```
+
+<Callout type="tip" title="Consejo practico">
+  `ORDER BY columna DESC` es muy comun cuando quieres ver "lo mas reciente primero" o "lo mas grande primero". Lo vas a usar todo el tiempo.
+</Callout>
+
+---
+
+## Ordenar por multiples columnas
+
+Puedes ordenar por varias columnas. SQL ordena primero por la primera columna, y cuando hay empates, usa la segunda columna para desempatar.
+
+```sql
+SELECT nombre, categoria, precio
+FROM productos
+ORDER BY categoria ASC, precio DESC;
+```
+
+Esto agrupa los productos por categoria (alfabeticamente) y dentro de cada categoria los ordena del mas caro al mas barato. Piensa en ello como: "primero ordena por categoria, y si dos productos tienen la misma categoria, desempata por precio."
+
+Otro ejemplo: ordenar pedidos por estado y luego por fecha.
+
+```sql
+SELECT id, cliente_id, estado, fecha, total
+FROM pedidos
+ORDER BY estado ASC, fecha DESC;
+```
+
+Asi ves todos los pedidos "completado" juntos (los mas recientes primero), luego los "pendiente", etc.
+
+---
+
+## ORDER BY con numero de posicion
+
+En vez de escribir el nombre de la columna, puedes usar el **numero de posicion** en el `SELECT`:
+
+```sql
+SELECT nombre, precio, categoria
+FROM productos
+ORDER BY 3, 2 DESC;
+```
+
+Aqui `3` se refiere a `categoria` (la tercera columna en el SELECT) y `2` se refiere a `precio`.
+
+<Callout type="warning" title="Cuidado con los numeros de posicion">
+  Esto funciona, pero hace tu consulta **mas dificil de leer**. Si alguien cambia el orden de las columnas en el SELECT, el ORDER BY se rompe silenciosamente. Prefiere usar nombres de columnas siempre que puedas.
+</Callout>
+
+---
+
+## LIMIT: Restringir la cantidad de resultados
+
+No siempre quieres todos los resultados. `LIMIT` te permite decir "dame solo los primeros N".
+
+```sql
+-- Los 5 productos mas caros
+SELECT nombre, precio
+FROM productos
+ORDER BY precio DESC
+LIMIT 5;
+```
+
+```sql
+-- Los 3 clientes mas recientes
+SELECT nombre, email, fecha_registro
+FROM clientes
+ORDER BY fecha_registro DESC
+LIMIT 3;
+```
+
+<Callout type="info">
+  `LIMIT` sin `ORDER BY` te da N filas "cualesquiera". Como SQL no garantiza orden, no sabes cuales te va a dar. Casi siempre quieres usar `LIMIT` junto con `ORDER BY`.
+</Callout>
+
+---
+
+## OFFSET: Saltarse filas
+
+`OFFSET` le dice a la base de datos "saltate las primeras N filas".
+
+```sql
+-- Saltate los primeros 5 productos y dame los siguientes 5
+SELECT nombre, precio
+FROM productos
+ORDER BY precio DESC
+LIMIT 5 OFFSET 5;
+```
+
+Esto te da los productos del puesto 6 al 10 (ordenados por precio descendente).
+
+---
+
+## El patron LIMIT + OFFSET para paginacion
+
+Este es uno de los patrones mas usados en aplicaciones web. Imagina que tienes una pagina de productos con 10 productos por pagina:
+
+```sql
+-- Pagina 1 (productos 1-10)
+SELECT nombre, precio, categoria
+FROM productos
+ORDER BY nombre
+LIMIT 10 OFFSET 0;
+
+-- Pagina 2 (productos 11-20)
+SELECT nombre, precio, categoria
+FROM productos
+ORDER BY nombre
+LIMIT 10 OFFSET 10;
+
+-- Pagina 3 (productos 21-30)
+SELECT nombre, precio, categoria
+FROM productos
+ORDER BY nombre
+LIMIT 10 OFFSET 20;
+```
+
+La formula general es: `OFFSET = (numero_pagina - 1) * elementos_por_pagina`.
+
+<Callout type="tip" title="Formula de paginacion">
+  Para la pagina `P` mostrando `N` elementos: `LIMIT N OFFSET (P - 1) * N`
+</Callout>
+
+---
+
+## NULLS FIRST y NULLS LAST
+
+Cuando ordenas una columna que tiene valores `NULL`, PostgreSQL los pone al final por defecto en orden ascendente. Puedes controlar esto:
+
+```sql
+-- NULLs primero
+SELECT nombre, precio
+FROM productos
+ORDER BY precio ASC NULLS FIRST;
+
+-- NULLs al final (explicitamente)
+SELECT nombre, precio
+FROM productos
+ORDER BY precio ASC NULLS LAST;
+
+-- Con DESC, por defecto los NULLs van primero.
+-- Si quieres cambiar eso:
+SELECT nombre, precio
+FROM productos
+ORDER BY precio DESC NULLS LAST;
+```
+
+<Callout type="info" title="Comportamiento por defecto">
+  En PostgreSQL: `ASC` pone los `NULL` al final, `DESC` los pone al principio. Con `NULLS FIRST` / `NULLS LAST` puedes forzar la posicion que prefieras.
+</Callout>
+
+---
+
+## Combinando todo
+
+Veamos un ejemplo completo que combina lo que hemos aprendido:
+
+```sql
+-- Los 10 pedidos mas recientes de estado 'completado',
+-- ordenados por total descendente
+SELECT p.id, c.nombre AS cliente, p.fecha, p.total
+FROM pedidos p
+JOIN clientes c ON p.cliente_id = c.id
+WHERE p.estado = 'completado'
+ORDER BY p.total DESC, p.fecha DESC
+LIMIT 10;
+```
+
+No te preocupes por el `JOIN` todavia (lo veremos en el Modulo 7). Lo importante aqui es ver como `WHERE`, `ORDER BY` y `LIMIT` trabajan juntos.
+
+---
+
+## Rendimiento y complejidad
+
+Vamos a hablar de algo que muchos cursos ignoran: **que tan costosas son estas operaciones**.
+
+<Callout type="performance" title="Costo de ORDER BY">
+  `ORDER BY` requiere **ordenar** todos los resultados. La complejidad de un ordenamiento es **O(n log n)** donde `n` es el numero de filas a ordenar. En tablas pequenas no lo notas, pero si tienes millones de filas, ordenar puede ser muy lento.
+</Callout>
+
+### LIMIT ayuda... pero tiene limites
+
+Cuando usas `LIMIT`, la base de datos puede hacer una optimizacion: no necesita ordenar *todo*, solo encontrar los primeros N elementos. Esto es mas rapido.
+
+```sql
+-- PostgreSQL puede optimizar esto: no ordena todo,
+-- solo busca los 10 mas grandes
+SELECT nombre, precio
+FROM productos
+ORDER BY precio DESC
+LIMIT 10;
+```
+
+### El problema de la paginacion profunda con OFFSET
+
+Aqui viene el problema serio. Mira estas dos consultas:
+
+```sql
+-- Pagina 1: rapida
+SELECT * FROM productos ORDER BY id LIMIT 10 OFFSET 0;
+
+-- Pagina 100,000: MUY lenta
+SELECT * FROM productos ORDER BY id LIMIT 10 OFFSET 999990;
+```
+
+La segunda consulta parece inocente, pero la base de datos tiene que **leer y descartar 999,990 filas** antes de darte las 10 que pides. El OFFSET es **O(n)** - tiene que recorrer todas esas filas aunque no las devuelva.
+
+<Callout type="performance" title="OFFSET profundo es lento">
+  `OFFSET 1000000` significa que la base de datos lee un millon de filas para descartarlas. No importa que tu LIMIT sea solo 10. Cuanto mas profunda la paginacion, mas lenta la consulta.
+</Callout>
+
+### Alternativa: paginacion por keyset (cursor)
+
+La solucion profesional para paginacion profunda es usar **keyset pagination** (paginacion por cursor). En vez de decir "saltate N filas", dices "dame filas despues de este valor":
+
+```sql
+-- En vez de OFFSET, usamos WHERE con el ultimo ID visto
+-- Supongamos que el ultimo producto de la pagina anterior tenia id = 500
+SELECT id, nombre, precio
+FROM productos
+WHERE id > 500
+ORDER BY id
+LIMIT 10;
+```
+
+Esto es **O(log n)** si `id` tiene un indice (casi siempre lo tiene). No importa si estas en la pagina 1 o en la pagina 100,000, la velocidad es la misma.
+
+<Callout type="tip" title="Cuando usar cada patron">
+  - **LIMIT + OFFSET**: Perfecto para pocas paginas (menos de ~100 paginas). Simple de implementar.
+  - **Keyset pagination**: Necesario cuando tienes muchos datos y el usuario puede navegar a paginas profundas. Mas complejo pero mucho mas eficiente.
+</Callout>
+
+---
+
+## Ejercicios
+
+Practica con estas consultas usando la base de datos del curso.
+
+**Ejercicio 1:** Muestra todos los productos ordenados por precio de mayor a menor. Muestra nombre, precio y categoria.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT nombre, precio, categoria
+FROM productos
+ORDER BY precio DESC;
+```
+</details>
+
+**Ejercicio 2:** Muestra los 5 clientes mas antiguos (los que se registraron primero). Muestra su nombre, email y fecha de registro.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT nombre, email, fecha_registro
+FROM clientes
+ORDER BY fecha_registro ASC
+LIMIT 5;
+```
+</details>
+
+**Ejercicio 3:** Muestra los productos ordenados por categoria (ascendente) y dentro de cada categoria por precio (descendente). Limita a 20 resultados.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT nombre, categoria, precio
+FROM productos
+ORDER BY categoria ASC, precio DESC
+LIMIT 20;
+```
+</details>
+
+**Ejercicio 4:** Simula la pagina 3 de un listado de pedidos (10 pedidos por pagina), ordenados por fecha descendente. Muestra id, fecha, total y estado.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT id, fecha, total, estado
+FROM pedidos
+ORDER BY fecha DESC
+LIMIT 10 OFFSET 20;
+```
+
+Pagina 3 con 10 elementos por pagina: `OFFSET = (3 - 1) * 10 = 20`
+</details>
+
+**Ejercicio 5:** Muestra los 3 pedidos con el total mas alto que esten en estado 'pendiente'.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT id, cliente_id, fecha, total
+FROM pedidos
+WHERE estado = 'pendiente'
+ORDER BY total DESC
+LIMIT 3;
+```
+</details>
+
+**Ejercicio 6 (Desafio):** Escribe una consulta con keyset pagination. Supongamos que ya viste productos con `id` hasta el 50. Trae los siguientes 10 productos ordenados por `id`.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT id, nombre, precio, categoria
+FROM productos
+WHERE id > 50
+ORDER BY id ASC
+LIMIT 10;
+```
+
+Esto es mucho mas eficiente que `OFFSET 50` para tablas grandes, ya que usa el indice de la columna `id` directamente.
+</details>

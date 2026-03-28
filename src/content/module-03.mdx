@@ -1,0 +1,544 @@
+import Callout from "../components/Callout.astro"
+
+<Callout type="warning" title="Prerequisito: base de datos de practica">
+  Todos los ejemplos y ejercicios de este modulo (y los siguientes) se ejecutan sobre la base de datos `tienda` que creamos en el **Modulo 2**. Si aun no la tienes configurada, ve al Modulo 2 y sigue los pasos para crear las tablas y cargar los datos de ejemplo antes de continuar.
+</Callout>
+
+## Tu primera consulta SQL
+
+Llegamos al momento que estabas esperando: vas a hablar con la base de datos por primera vez. La instruccion mas fundamental de SQL es **SELECT**, y la vas a usar en absolutamente todo lo que hagas.
+
+La forma mas basica de SELECT es:
+
+```sql
+SELECT columnas
+FROM tabla;
+```
+
+Asi de simple. Le dices que columnas quieres y de que tabla. Probemos con nuestra base de datos:
+
+```sql
+SELECT nombre, precio
+FROM productos;
+```
+
+Esta consulta devuelve el nombre y precio de **todos** los productos. El resultado se ve algo asi:
+
+```
+       nombre        |  precio
+---------------------+---------
+ Laptop Pro 15       | 1299.99
+ Mouse Inalambrico   |   29.99
+ Teclado Mecanico    |   89.99
+ Monitor 27 pulgadas |  449.99
+ Auriculares Bluetooth|  59.99
+ ...
+```
+
+Felicidades, acabas de hacer tu primera consulta SQL.
+
+## SELECT * vs columnas especificas
+
+Existe un atajo para pedir **todas** las columnas de una tabla:
+
+```sql
+SELECT *
+FROM productos;
+```
+
+El asterisco (`*`) significa "dame todas las columnas". Es muy comodo para explorar datos rapidamente, pero tiene un problema importante en aplicaciones reales.
+
+```sql
+-- Esto trae TODAS las columnas: id, nombre, precio, categoria, stock, fecha_creacion
+SELECT *
+FROM productos;
+
+-- Esto trae solo lo que necesitas
+SELECT nombre, precio
+FROM productos;
+```
+
+<Callout type="performance" title="¿Por que evitar SELECT * en produccion?">
+  Cuando usas `SELECT *`, la base de datos tiene que leer y transferir **todas** las columnas de cada fila, incluso las que no necesitas. Si tu tabla tiene 20 columnas pero solo necesitas 3, estas transfiriendo casi 7 veces mas datos de los necesarios.
+
+  Piensalo asi: el trabajo por cada fila es proporcional al numero de columnas que pides. Si pides 3 columnas, es **O(3)** por fila. Si pides 20, es **O(20)** por fila. En una tabla con un millon de filas, esa diferencia se nota.
+
+  Ademas, `SELECT *` hace que tu codigo sea fragil: si alguien agrega una columna nueva a la tabla, tu consulta de repente devuelve datos que no esperabas.
+</Callout>
+
+<Callout type="tip" title="¿Cuando si usar SELECT *?">
+  Usa `SELECT *` libremente cuando estes **explorando** datos, aprendiendo la estructura de una tabla, o haciendo consultas rapidas en desarrollo. La recomendacion de evitarlo aplica sobre todo a consultas en aplicaciones en produccion.
+</Callout>
+
+## Seleccionando columnas especificas
+
+Puedes pedir una, dos o todas las columnas que quieras. El orden en que las pides es el orden en que aparecen en el resultado:
+
+```sql
+-- Solo el nombre
+SELECT nombre
+FROM clientes;
+
+-- Nombre y ciudad (en ese orden)
+SELECT nombre, ciudad
+FROM clientes;
+
+-- Ciudad primero, luego nombre (cambio de orden)
+SELECT ciudad, nombre
+FROM clientes;
+
+-- Varias columnas de empleados
+SELECT nombre, departamento, salario
+FROM empleados;
+```
+
+Observa que en el tercer ejemplo, la ciudad aparece antes que el nombre en el resultado. **Tu controlas el orden de las columnas en la salida**.
+
+## Alias de columnas con AS
+
+A veces los nombres de las columnas no son muy descriptivos o quieres darles un nombre mas claro en el resultado. Para eso usamos **AS**:
+
+```sql
+SELECT
+    nombre AS producto,
+    precio AS precio_unitario
+FROM productos;
+```
+
+Resultado:
+
+```
+       producto       | precio_unitario
+----------------------+----------------
+ Laptop Pro 15        |        1299.99
+ Mouse Inalambrico    |          29.99
+ Teclado Mecanico     |          89.99
+ ...
+```
+
+Los alias son especialmente utiles cuando haces calculos o cuando el nombre original de la columna no es claro:
+
+```sql
+SELECT
+    nombre AS empleado,
+    departamento AS area,
+    salario AS sueldo_mensual
+FROM empleados;
+```
+
+<Callout type="info" title="AS es opcional (pero usalo)">
+  Tecnicamente puedes omitir la palabra `AS` y simplemente poner el alias:
+
+  ```sql
+  SELECT nombre producto, precio costo FROM productos;
+  ```
+
+  Funciona, pero es mucho menos legible. Recomiendo siempre usar `AS` para que sea claro que estas creando un alias.
+</Callout>
+
+### Alias con espacios
+
+Si necesitas un alias con espacios, usa comillas dobles:
+
+```sql
+SELECT
+    nombre AS "Nombre del Producto",
+    precio AS "Precio en USD"
+FROM productos;
+```
+
+## DISTINCT: eliminando duplicados
+
+Si una consulta devuelve valores repetidos y quieres ver solo los valores unicos, usa **DISTINCT**:
+
+```sql
+-- Sin DISTINCT: puede repetir ciudades
+SELECT ciudad
+FROM clientes;
+```
+
+```
+   ciudad
+-----------
+ Santiago
+ Valparaiso
+ Santiago
+ Concepcion
+ Santiago
+ Valparaiso
+ Temuco
+ Santiago
+ Antofagasta
+ Concepcion
+```
+
+```sql
+-- Con DISTINCT: cada ciudad aparece una sola vez
+SELECT DISTINCT ciudad
+FROM clientes;
+```
+
+```
+   ciudad
+-----------
+ Santiago
+ Valparaiso
+ Concepcion
+ Temuco
+ Antofagasta
+```
+
+Puedes usar DISTINCT con multiples columnas. En ese caso, elimina filas donde **la combinacion** de columnas sea duplicada:
+
+```sql
+-- Combinaciones unicas de departamento y jefe_id
+SELECT DISTINCT departamento, jefe_id
+FROM empleados;
+```
+
+Esto devuelve cada combinacion unica de departamento y jefe, no cada departamento unico y cada jefe unico por separado.
+
+```sql
+-- ¿Que categorias de productos tenemos?
+SELECT DISTINCT categoria
+FROM productos;
+```
+
+```
+  categoria
+------------
+ Electronica
+ Muebles
+ Accesorios
+```
+
+```sql
+-- ¿En que estados pueden estar los pedidos?
+SELECT DISTINCT estado
+FROM pedidos;
+```
+
+```
+   estado
+-----------
+ completado
+ enviado
+ pendiente
+```
+
+<Callout type="performance" title="Costo de DISTINCT">
+  DISTINCT no es gratis. Para eliminar duplicados, la base de datos necesita **ordenar o agrupar** todos los resultados y luego compararlos entre si. En tablas grandes esto puede ser costoso. Usalo cuando realmente necesites valores unicos, no "por si acaso".
+</Callout>
+
+## Expresiones y calculos en SELECT
+
+SELECT no solo sirve para leer columnas tal cual estan. Puedes hacer **calculos** directamente en la consulta:
+
+### Aritmetica
+
+```sql
+-- Precio con IVA (19%)
+SELECT
+    nombre,
+    precio,
+    precio * 1.19 AS precio_con_iva
+FROM productos;
+```
+
+```
+       nombre        |  precio  | precio_con_iva
+---------------------+----------+---------------
+ Laptop Pro 15       | 1299.99  |      1547.39
+ Mouse Inalambrico   |   29.99  |        35.69
+ Teclado Mecanico    |   89.99  |       107.09
+ ...
+```
+
+```sql
+-- Valor total del inventario por producto
+SELECT
+    nombre,
+    precio,
+    stock,
+    precio * stock AS valor_inventario
+FROM productos;
+```
+
+```sql
+-- Salario anual de empleados (asumiendo 12 meses)
+SELECT
+    nombre,
+    salario AS salario_mensual,
+    salario * 12 AS salario_anual
+FROM empleados;
+```
+
+```sql
+-- Descuento del 10% en productos
+SELECT
+    nombre,
+    precio AS precio_original,
+    precio * 0.10 AS descuento,
+    precio * 0.90 AS precio_final
+FROM productos;
+```
+
+### Concatenacion de texto
+
+En PostgreSQL, usamos el operador `||` para unir texto:
+
+```sql
+SELECT
+    nombre || ' - ' || ciudad AS cliente_info
+FROM clientes;
+```
+
+```
+        cliente_info
+----------------------------
+ Maria Garcia - Santiago
+ Carlos Lopez - Valparaiso
+ Ana Martinez - Santiago
+ ...
+```
+
+```sql
+-- Descripcion del producto con precio
+SELECT
+    nombre || ' ($' || precio || ')' AS descripcion
+FROM productos;
+```
+
+```
+          descripcion
+-----------------------------
+ Laptop Pro 15 ($1299.99)
+ Mouse Inalambrico ($29.99)
+ Teclado Mecanico ($89.99)
+ ...
+```
+
+### Valores literales
+
+Puedes incluir valores fijos (literales) en tu SELECT:
+
+```sql
+SELECT
+    nombre,
+    precio,
+    'CLP' AS moneda,
+    2024 AS anio
+FROM productos;
+```
+
+Cada fila tendra las columnas `moneda` con el valor 'CLP' y `anio` con el valor 2024. Esto puede parecer inutil ahora, pero es muy practico cuando combinas datos de distintas fuentes.
+
+## SELECT sin FROM
+
+Dato curioso: en PostgreSQL puedes usar SELECT sin una tabla, como una calculadora:
+
+```sql
+SELECT 2 + 2;
+-- Resultado: 4
+
+SELECT 100 * 1.19 AS con_iva;
+-- Resultado: 119.00
+
+SELECT 'Hola' || ' ' || 'Mundo' AS saludo;
+-- Resultado: Hola Mundo
+
+SELECT NOW() AS fecha_actual;
+-- Resultado: 2024-04-20 15:30:00 (la fecha y hora actual)
+```
+
+Es util para probar expresiones rapidamente sin necesidad de consultar una tabla.
+
+## El orden de escritura vs. el orden de ejecucion
+
+Este es un concepto que te va a ahorrar muchos dolores de cabeza. El orden en que **escribes** una consulta SQL no es el orden en que la base de datos la **ejecuta**.
+
+Tu escribes:
+
+```sql
+SELECT columnas    -- 1° en escribir
+FROM tabla         -- 2° en escribir
+WHERE condicion    -- 3° en escribir
+```
+
+Pero la base de datos ejecuta:
+
+```sql
+FROM tabla         -- 1° en ejecutar (primero encuentra la tabla)
+WHERE condicion    -- 2° en ejecutar (luego filtra filas)
+SELECT columnas    -- 3° en ejecutar (al final elige columnas)
+```
+
+<Callout type="info" title="¿Por que importa esto?">
+  Esto explica, por ejemplo, por que no puedes usar un alias definido en SELECT dentro del WHERE: cuando el WHERE se ejecuta, el SELECT todavia no ha corrido.
+
+  ```sql
+  -- Esto NO funciona:
+  SELECT precio * 1.19 AS precio_con_iva
+  FROM productos
+  WHERE precio_con_iva > 100;  -- Error: precio_con_iva no existe aun
+
+  -- Esto SI funciona:
+  SELECT precio * 1.19 AS precio_con_iva
+  FROM productos
+  WHERE precio * 1.19 > 100;  -- Repites la expresion
+  ```
+
+  En modulos posteriores veremos el orden completo de ejecucion cuando agreguemos mas clausulas.
+</Callout>
+
+## Buenas practicas al escribir SELECT
+
+Antes de pasar a los ejercicios, algunas recomendaciones:
+
+```sql
+-- MAL: todo en una linea, dificil de leer
+SELECT nombre,precio,stock,precio*stock AS total FROM productos;
+
+-- BIEN: cada columna en su linea, con indentacion clara
+SELECT
+    nombre,
+    precio,
+    stock,
+    precio * stock AS total
+FROM productos;
+```
+
+```sql
+-- MAL: columnas ambiguas, sin alias
+SELECT nombre, precio * 1.19, stock * precio
+FROM productos;
+
+-- BIEN: alias descriptivos para cada calculo
+SELECT
+    nombre,
+    precio * 1.19 AS precio_con_iva,
+    stock * precio AS valor_inventario
+FROM productos;
+```
+
+<Callout type="tip" title="SQL no distingue mayusculas">
+  Las palabras clave de SQL (SELECT, FROM, WHERE, etc.) funcionan en mayusculas o minusculas. `select`, `SELECT` y `Select` son lo mismo. La convencion mas comun es escribir las palabras clave en **MAYUSCULAS** para distinguirlas de los nombres de tablas y columnas. En este curso usamos esa convencion.
+</Callout>
+
+---
+
+### Ejercicios
+
+**Ejercicio 1**: Escribe una consulta que muestre el nombre y la categoria de todos los productos.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT nombre, categoria
+FROM productos;
+```
+</details>
+
+**Ejercicio 2**: Muestra el nombre de cada producto junto con su precio con IVA (19%) y ponle un alias descriptivo a la nueva columna.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+    nombre,
+    precio,
+    precio * 1.19 AS precio_con_iva
+FROM productos;
+```
+</details>
+
+**Ejercicio 3**: Obtener una lista de todas las ciudades unicas donde tenemos clientes.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT DISTINCT ciudad
+FROM clientes;
+```
+</details>
+
+**Ejercicio 4**: Muestra el nombre completo de cada cliente concatenado con su email entre parentesis. Por ejemplo: "Maria Garcia (maria@email.com)". Usa un alias llamado `contacto`.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+    nombre || ' (' || email || ')' AS contacto
+FROM clientes;
+```
+</details>
+
+**Ejercicio 5**: Para cada producto, muestra su nombre, stock actual, precio y el valor total del inventario (stock multiplicado por precio). Usa alias descriptivos.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+    nombre,
+    stock AS unidades_disponibles,
+    precio AS precio_unitario,
+    stock * precio AS valor_total_inventario
+FROM productos;
+```
+</details>
+
+**Ejercicio 6**: Obtener los departamentos unicos de la tabla empleados. ¿Cuantos departamentos distintos hay?
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT DISTINCT departamento
+FROM empleados;
+-- Resultado: Gerencia, Ventas, Tecnologia, Soporte (4 departamentos)
+```
+</details>
+
+**Ejercicio 7**: Muestra el nombre de cada empleado, su salario mensual y su salario anual (12 meses). Ademas agrega una columna literal que diga 'CLP' como moneda.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+    nombre,
+    salario AS salario_mensual,
+    salario * 12 AS salario_anual,
+    'CLP' AS moneda
+FROM empleados;
+```
+</details>
+
+**Ejercicio 8 (desafio)**: Sin ejecutar la consulta, ¿esta consulta va a funcionar? ¿Por que si o por que no?
+
+```sql
+SELECT
+    nombre,
+    precio * stock AS valor
+FROM productos
+WHERE valor > 1000;
+```
+
+<details>
+<summary>Ver solucion</summary>
+
+No funciona. El alias `valor` se define en el SELECT, pero el WHERE se ejecuta **antes** que el SELECT. La base de datos no conoce el alias `valor` cuando evalua el WHERE. La forma correcta seria:
+
+```sql
+SELECT
+    nombre,
+    precio * stock AS valor
+FROM productos
+WHERE precio * stock > 1000;
+```
+</details>

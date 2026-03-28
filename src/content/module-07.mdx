@@ -1,0 +1,938 @@
+import Callout from "../components/Callout.astro"
+import CommandTable from "../components/CommandTable.astro"
+
+Hasta ahora hemos consultado una tabla a la vez. Pero la informacion real vive repartida en varias tablas. Los pedidos estan en una tabla, los clientes en otra, los productos en otra. Para obtener respuestas utiles, necesitamos **conectar** esas tablas. Eso es exactamente lo que hacen los `JOIN`.
+
+---
+
+## Por que los datos estan en tablas separadas?
+
+Imagina que guardas todo en una sola tabla gigante: cada pedido tendria el nombre del cliente, su email, su ciudad, el nombre del producto, el precio... repetido una y otra vez. Eso es un desastre:
+
+- **Datos duplicados**: el nombre del cliente se repite en cada pedido que hace.
+- **Inconsistencia**: si el cliente cambia de email, hay que actualizarlo en cientos de filas.
+- **Desperdicio**: ocupas mucho mas espacio del necesario.
+
+La solucion es la **normalizacion**: separar los datos en tablas relacionadas. Cada tabla tiene un tema (clientes, productos, pedidos) y se conectan mediante **claves foraneas** (como `cliente_id` en la tabla `pedidos`).
+
+Nuestra base de datos tiene esta estructura:
+
+```
+clientes (id, nombre, email, ciudad, fecha_registro)
+    |
+    | cliente_id
+    v
+pedidos (id, cliente_id, fecha, total, estado)
+    |
+    | pedido_id
+    v
+detalle_pedidos (id, pedido_id, producto_id, cantidad, precio_unitario)
+    ^
+    | producto_id
+    |
+productos (id, nombre, precio, categoria, stock, fecha_creacion)
+
+empleados (id, nombre, departamento, salario, fecha_contratacion, jefe_id)
+    |                                                              |
+    +<-------- jefe_id apunta a otro empleado.id ------------------+
+```
+
+Los `JOIN` nos permiten reconstruir la informacion completa combinando estas tablas.
+
+---
+
+## INNER JOIN: Solo las coincidencias
+
+`INNER JOIN` devuelve solo las filas que tienen **coincidencia en ambas tablas**. Si un cliente no tiene pedidos, no aparece. Si un pedido no tiene cliente valido, tampoco aparece.
+
+Veamos como funciona con un ejemplo visual. Supongamos que tenemos estos datos:
+
+```
+ tabla clientes           tabla pedidos
+ ┌────┬──────────┐        ┌────┬────────────┬───────┐
+ │ id │ nombre   │        │ id │ cliente_id │ total │
+ ├────┼──────────┤        ├────┼────────────┼───────┤
+ │  1 │ Ana      │        │ 10 │     1      │  500  │
+ │  2 │ Bruno    │        │ 11 │     1      │  300  │
+ │  3 │ Carla    │        │ 12 │     3      │  150  │
+ └────┴──────────┘        └────┴────────────┴───────┘
+
+ Ana tiene 2 pedidos, Carla tiene 1, Bruno no tiene ninguno.
+```
+
+Al hacer `INNER JOIN`:
+
+```sql
+SELECT c.nombre, p.id AS pedido_id, p.total
+FROM clientes c
+INNER JOIN pedidos p ON c.id = p.cliente_id;
+```
+
+```
+ Resultado INNER JOIN
+ ┌──────────┬───────────┬───────┐
+ │ nombre   │ pedido_id │ total │
+ ├──────────┼───────────┼───────┤
+ │ Ana      │    10     │  500  │
+ │ Ana      │    11     │  300  │
+ │ Carla    │    12     │  150  │
+ └──────────┴───────────┴───────┘
+
+ Bruno NO aparece (no tiene pedidos).
+ Ana aparece 2 veces (tiene 2 pedidos).
+```
+
+Ahora con nuestra base de datos de practica:
+
+```sql
+SELECT
+  c.nombre AS cliente,
+  p.id AS pedido_id,
+  p.fecha,
+  p.total
+FROM clientes c
+INNER JOIN pedidos p ON c.id = p.cliente_id;
+```
+
+Desmenucemos la sintaxis:
+
+- `FROM clientes c` — tabla principal (o "izquierda")
+- `INNER JOIN pedidos p` — tabla que queremos conectar (la "derecha")
+- `ON c.id = p.cliente_id` — la condicion de conexion
+
+<Callout type="info">
+  `INNER JOIN` y `JOIN` son lo mismo. La palabra `INNER` es opcional, pero es buena practica escribirla para ser explicito.
+</Callout>
+
+Puedes encadenar multiples JOINs. Aqui conectamos `detalle_pedidos` con `pedidos` y con `productos`:
+
+```sql
+SELECT
+  p.id AS pedido_id,
+  pr.nombre AS producto,
+  dp.cantidad,
+  dp.precio_unitario
+FROM detalle_pedidos dp
+INNER JOIN pedidos p ON dp.pedido_id = p.id
+INNER JOIN productos pr ON dp.producto_id = pr.id;
+```
+
+---
+
+## Aliases de tablas: Escribir menos
+
+Escribir `clientes.nombre` y `pedidos.fecha` una y otra vez es tedioso. Usa **aliases** para abreviar:
+
+```sql
+SELECT
+  c.nombre AS cliente,
+  p.id AS pedido_id,
+  p.fecha,
+  p.total
+FROM clientes c
+INNER JOIN pedidos p ON c.id = p.cliente_id;
+```
+
+`clientes c` le da el alias `c` a la tabla clientes. Ahora puedes escribir `c.nombre` en vez de `clientes.nombre`. Esto no cambia el resultado, solo hace la consulta mas corta y legible.
+
+<Callout type="tip" title="Convencion de aliases">
+  Una convencion comun es usar la primera letra de la tabla: `c` para clientes, `p` para pedidos, `pr` o `prod` para productos, `dp` para detalle_pedidos, `e` para empleados. Lo importante es que sea consistente y claro.
+</Callout>
+
+---
+
+## LEFT JOIN: Todo de la tabla izquierda
+
+`LEFT JOIN` (o `LEFT OUTER JOIN`) devuelve **todas las filas de la tabla izquierda**, incluso si no tienen coincidencia en la tabla derecha. Donde no hay coincidencia, las columnas de la derecha seran `NULL`.
+
+Usando los mismos datos del ejemplo anterior:
+
+```
+ tabla clientes           tabla pedidos
+ ┌────┬──────────┐        ┌────┬────────────┬───────┐
+ │ id │ nombre   │        │ id │ cliente_id │ total │
+ ├────┼──────────┤        ├────┼────────────┼───────┤
+ │  1 │ Ana      │        │ 10 │     1      │  500  │
+ │  2 │ Bruno    │        │ 11 │     1      │  300  │
+ │  3 │ Carla    │        │ 12 │     3      │  150  │
+ └────┴──────────┘        └────┴────────────┴───────┘
+```
+
+```sql
+SELECT c.nombre, p.id AS pedido_id, p.total
+FROM clientes c
+LEFT JOIN pedidos p ON c.id = p.cliente_id;
+```
+
+```
+ Resultado LEFT JOIN
+ ┌──────────┬───────────┬───────┐
+ │ nombre   │ pedido_id │ total │
+ ├──────────┼───────────┼───────┤
+ │ Ana      │    10     │  500  │
+ │ Ana      │    11     │  300  │
+ │ Bruno    │   NULL    │ NULL  │  ← Bruno aparece con NULLs
+ │ Carla    │    12     │  150  │
+ └──────────┴───────────┴───────┘
+
+ TODOS los clientes aparecen, tengan o no pedidos.
+```
+
+Ahora con nuestra base de datos:
+
+```sql
+-- TODOS los clientes, tengan o no pedidos
+SELECT
+  c.nombre AS cliente,
+  c.email,
+  p.id AS pedido_id,
+  p.total
+FROM clientes c
+LEFT JOIN pedidos p ON c.id = p.cliente_id;
+```
+
+### Patron: encontrar registros sin relacion
+
+`LEFT JOIN` + `WHERE tabla_derecha.id IS NULL` es un patron clasico para encontrar registros huerfanos:
+
+```sql
+-- Clientes que NUNCA han hecho un pedido
+SELECT c.nombre, c.email
+FROM clientes c
+LEFT JOIN pedidos p ON c.id = p.cliente_id
+WHERE p.id IS NULL;
+```
+
+```sql
+-- Productos que nunca se han vendido
+SELECT pr.nombre, pr.precio, pr.categoria
+FROM productos pr
+LEFT JOIN detalle_pedidos dp ON pr.id = dp.producto_id
+WHERE dp.id IS NULL;
+```
+
+```sql
+-- Todos los productos con su cantidad total vendida (0 si nunca se vendieron)
+SELECT
+  pr.nombre,
+  pr.precio,
+  COALESCE(SUM(dp.cantidad), 0) AS total_vendido
+FROM productos pr
+LEFT JOIN detalle_pedidos dp ON pr.id = dp.producto_id
+GROUP BY pr.id, pr.nombre, pr.precio
+ORDER BY total_vendido DESC;
+```
+
+<Callout type="info" title="COALESCE para manejar NULLs">
+  `COALESCE(valor, 0)` devuelve `valor` si no es NULL, o `0` si es NULL. Muy util con LEFT JOIN para convertir NULLs en ceros.
+</Callout>
+
+---
+
+## RIGHT JOIN: El espejo del LEFT
+
+`RIGHT JOIN` es exactamente como `LEFT JOIN` pero al reves: mantiene todas las filas de la tabla **derecha**.
+
+```sql
+-- Esto con RIGHT JOIN...
+SELECT c.nombre, p.id, p.total
+FROM clientes c
+RIGHT JOIN pedidos p ON c.id = p.cliente_id;
+
+-- ...es equivalente a esto con LEFT JOIN (invirtiendo las tablas)
+SELECT c.nombre, p.id, p.total
+FROM pedidos p
+LEFT JOIN clientes c ON c.id = p.cliente_id;
+```
+
+<Callout type="info">
+  En la practica, casi nadie usa `RIGHT JOIN`. Simplemente inviertes el orden de las tablas y usas `LEFT JOIN`. Es mas facil de leer y mas consistente.
+</Callout>
+
+---
+
+## FULL OUTER JOIN: Todo de ambos lados
+
+`FULL OUTER JOIN` devuelve todas las filas de **ambas tablas**. Donde hay coincidencia, las combina. Donde no, pone NULLs en las columnas de la tabla que no tiene coincidencia.
+
+```
+ tabla clientes           tabla pedidos
+ ┌────┬──────────┐        ┌────┬────────────┬───────┐
+ │ id │ nombre   │        │ id │ cliente_id │ total │
+ ├────┼──────────┤        ├────┼────────────┼───────┤
+ │  1 │ Ana      │        │ 10 │     1      │  500  │
+ │  2 │ Bruno    │        │ 11 │     1      │  300  │
+ │  3 │ Carla    │        │ 12 │     3      │  150  │
+ └────┴──────────┘        │ 13 │     99     │  200  │ ← cliente_id 99 no existe
+                          └────┴────────────┴───────┘
+```
+
+```sql
+SELECT c.nombre, p.id AS pedido_id, p.total
+FROM clientes c
+FULL OUTER JOIN pedidos p ON c.id = p.cliente_id;
+```
+
+```
+ Resultado FULL OUTER JOIN
+ ┌──────────┬───────────┬───────┐
+ │ nombre   │ pedido_id │ total │
+ ├──────────┼───────────┼───────┤
+ │ Ana      │    10     │  500  │
+ │ Ana      │    11     │  300  │
+ │ Bruno    │   NULL    │ NULL  │  ← cliente sin pedidos
+ │ Carla    │    12     │  150  │
+ │ NULL     │    13     │  200  │  ← pedido sin cliente valido
+ └──────────┴───────────┴───────┘
+
+ Aparece TODO: clientes sin pedidos Y pedidos sin cliente.
+```
+
+Con nuestra base de datos:
+
+```sql
+SELECT
+  c.nombre AS cliente,
+  p.id AS pedido_id,
+  p.total
+FROM clientes c
+FULL OUTER JOIN pedidos p ON c.id = p.cliente_id;
+```
+
+En la practica, `FULL OUTER JOIN` se usa poco comparado con `INNER JOIN` o `LEFT JOIN`, pero es muy util para auditorias o para encontrar inconsistencias en los datos.
+
+---
+
+## Cuando usar cada JOIN
+
+<CommandTable
+  commands={[
+    { command: "INNER JOIN", description: "Necesitas solo los datos que tienen match en ambas tablas. Es el JOIN mas comun. Ejemplo: 'clientes que SI tienen pedidos'." },
+    { command: "LEFT JOIN", description: "Necesitas TODOS los registros de la tabla principal, tengan o no match. Ejemplo: 'todos los clientes, con o sin pedidos'. Tambien para encontrar registros sin relacion (con WHERE ... IS NULL)." },
+    { command: "RIGHT JOIN", description: "Casi nunca. Puedes invertir las tablas y usar LEFT JOIN, que es mas legible." },
+    { command: "FULL OUTER JOIN", description: "Para auditorias: encontrar registros huerfanos en AMBAS tablas. Poco comun en consultas del dia a dia." },
+    { command: "CROSS JOIN", description: "Genera TODAS las combinaciones posibles (producto cartesiano). Util para generar combinaciones, calendarios, o tablas de referencia. Rara vez se usa con datos transaccionales." },
+  ]}
+/>
+
+<Callout type="tip" title="Regla rapida">
+  Si la pregunta incluye la palabra **"todos"** (todos los clientes, todos los productos), probablemente necesitas `LEFT JOIN`. Si solo te interesan los que tienen datos relacionados, usa `INNER JOIN`.
+</Callout>
+
+---
+
+## Self JOIN: Una tabla consigo misma
+
+A veces necesitas conectar una tabla **consigo misma**. El ejemplo clasico es la tabla `empleados` donde `jefe_id` apunta al `id` de otro empleado.
+
+```sql
+-- Ver cada empleado junto con el nombre de su jefe
+SELECT
+  e.nombre AS empleado,
+  e.departamento,
+  j.nombre AS jefe
+FROM empleados e
+LEFT JOIN empleados j ON e.jefe_id = j.id;
+```
+
+Aqui usamos la tabla `empleados` dos veces: una como `e` (el empleado) y otra como `j` (el jefe). El `LEFT JOIN` asegura que aparezcan todos los empleados, incluso el jefe superior que no tiene jefe (su `jefe_id` seria NULL).
+
+```sql
+-- Empleados que ganan mas que su jefe
+SELECT
+  e.nombre AS empleado,
+  e.salario AS salario_empleado,
+  j.nombre AS jefe,
+  j.salario AS salario_jefe
+FROM empleados e
+INNER JOIN empleados j ON e.jefe_id = j.id
+WHERE e.salario > j.salario;
+```
+
+<Callout type="tip" title="Self JOIN requiere aliases">
+  Cuando haces un self JOIN, los aliases son **obligatorios**. Sin ellos, PostgreSQL no sabe a cual de las dos "copias" de la tabla te refieres.
+</Callout>
+
+---
+
+## JOIN con multiples condiciones y ON vs WHERE
+
+La clausula `ON` puede tener mas de una condicion, conectadas con `AND`:
+
+```sql
+SELECT
+  p.id AS pedido_id,
+  p.fecha,
+  pr.nombre AS producto,
+  dp.cantidad,
+  dp.precio_unitario
+FROM pedidos p
+INNER JOIN detalle_pedidos dp ON dp.pedido_id = p.id
+INNER JOIN productos pr ON dp.producto_id = pr.id
+  AND pr.categoria = 'Electronica'
+WHERE p.fecha >= '2024-01-01';
+```
+
+<Callout type="warning" title="ON vs WHERE: diferencia critica con LEFT JOIN">
+  Con `INNER JOIN`, poner la condicion en el `ON` o en el `WHERE` da el mismo resultado. Pero con `LEFT JOIN`, es **muy diferente**: una condicion en el `ON` filtra **antes** de hacer el join (sin perder filas de la izquierda), mientras que en el `WHERE` filtra **despues** (y puede eliminar filas de la izquierda).
+</Callout>
+
+Este es uno de los errores mas frecuentes con JOINs. Veamos la diferencia:
+
+```sql
+-- Condicion en ON:
+-- Muestra TODOS los clientes, pero solo sus pedidos completados
+SELECT c.nombre, p.id, p.estado
+FROM clientes c
+LEFT JOIN pedidos p ON c.id = p.cliente_id
+  AND p.estado = 'completado';
+-- Clientes sin pedidos completados aparecen con NULLs ✓
+
+-- Condicion en WHERE:
+-- Solo muestra clientes que TENGAN pedidos completados
+SELECT c.nombre, p.id, p.estado
+FROM clientes c
+LEFT JOIN pedidos p ON c.id = p.cliente_id
+WHERE p.estado = 'completado';
+-- Clientes sin pedidos completados DESAPARECEN ✗
+-- (porque p.estado seria NULL, y NULL != 'completado')
+```
+
+¿Por que la segunda consulta pierde filas? Porque `WHERE` se aplica **despues** del JOIN. Para un cliente sin pedidos completados, `p.estado` es NULL, y `NULL = 'completado'` es falso. Entonces esa fila se descarta, y el LEFT JOIN se comporta como si fuera un INNER JOIN.
+
+<Callout type="warning" title="LEFT JOIN que se convierte en INNER JOIN">
+  Si filtras por una columna de la tabla derecha en el `WHERE` (por ejemplo, `WHERE p.estado = 'completado'`), estas eliminando todas las filas donde esa columna es NULL, lo que cancela el efecto del LEFT JOIN. Si necesitas filtrar la tabla derecha sin perder filas de la izquierda, pon la condicion en el `ON`.
+</Callout>
+
+---
+
+## La trampa de los duplicados
+
+Esta es probablemente la fuente de errores mas frustrante para quienes empiezan con JOINs. Cuando haces un JOIN, **las filas se pueden multiplicar**, y si no lo tienes en cuenta, tus conteos y sumas seran incorrectos.
+
+### Por que los JOINs generan filas repetidas
+
+Un JOIN combina cada fila de la tabla izquierda con **cada fila que coincida** en la tabla derecha. Si un cliente tiene 3 pedidos, ese cliente aparece 3 veces en el resultado:
+
+```sql
+SELECT c.nombre, p.id AS pedido_id, p.total
+FROM clientes c
+INNER JOIN pedidos p ON c.id = p.cliente_id
+WHERE c.nombre = 'Ana Torres';
+```
+
+```
+ ┌─────────────┬───────────┬────────┐
+ │ nombre      │ pedido_id │ total  │
+ ├─────────────┼───────────┼────────┤
+ │ Ana Torres  │     1     │ 150.50 │
+ │ Ana Torres  │     4     │  89.99 │
+ │ Ana Torres  │     7     │ 320.00 │
+ └─────────────┴───────────┴────────┘
+
+ Ana aparece 3 veces porque tiene 3 pedidos.
+ Esto es CORRECTO — cada fila es un pedido distinto.
+```
+
+Hasta aqui todo bien. El problema aparece cuando agregas **otro JOIN** que multiplica las filas aun mas.
+
+### El efecto multiplicador con multiples JOINs
+
+Supongamos que Ana tiene 3 pedidos, y cada pedido tiene 2 productos en detalle_pedidos. Si hacemos JOIN de pedidos con detalle_pedidos:
+
+```sql
+SELECT
+  c.nombre,
+  p.id AS pedido_id,
+  p.total,
+  dp.producto_id,
+  dp.cantidad
+FROM clientes c
+INNER JOIN pedidos p ON c.id = p.cliente_id
+INNER JOIN detalle_pedidos dp ON p.id = dp.pedido_id
+WHERE c.nombre = 'Ana Torres';
+```
+
+```
+ ┌─────────────┬───────────┬────────┬─────────────┬──────────┐
+ │ nombre      │ pedido_id │ total  │ producto_id │ cantidad │
+ ├─────────────┼───────────┼────────┼─────────────┼──────────┤
+ │ Ana Torres  │     1     │ 150.50 │      3      │    2     │
+ │ Ana Torres  │     1     │ 150.50 │      7      │    1     │  ← pedido 1: 2 lineas
+ │ Ana Torres  │     4     │  89.99 │      1      │    3     │
+ │ Ana Torres  │     4     │  89.99 │      5      │    1     │  ← pedido 4: 2 lineas
+ │ Ana Torres  │     7     │ 320.00 │      2      │    1     │
+ │ Ana Torres  │     7     │ 320.00 │      8      │    2     │  ← pedido 7: 2 lineas
+ └─────────────┴───────────┴────────┴─────────────┴──────────┘
+
+ 3 pedidos × 2 detalles cada uno = 6 filas.
+ El total de cada pedido se REPITE por cada linea de detalle.
+```
+
+Observa que `p.total` aparece repetido. El pedido 1 tiene `total = 150.50`, pero esa fila aparece 2 veces (una por cada producto en ese pedido). Esto es correcto en el resultado del JOIN, pero se convierte en problema cuando haces calculos.
+
+### SUM inflado: el error clasico
+
+¿Que pasa si sumas `p.total` en la consulta anterior?
+
+```sql
+-- INCORRECTO: SUM inflada por duplicados
+SELECT
+  c.nombre,
+  SUM(p.total) AS gasto_total
+FROM clientes c
+INNER JOIN pedidos p ON c.id = p.cliente_id
+INNER JOIN detalle_pedidos dp ON p.id = dp.pedido_id
+WHERE c.nombre = 'Ana Torres'
+GROUP BY c.nombre;
+```
+
+```
+ Resultado INCORRECTO
+ ┌─────────────┬─────────────┐
+ │ nombre      │ gasto_total │
+ ├─────────────┼─────────────┤
+ │ Ana Torres  │   1120.98   │  ← INCORRECTO!
+ └─────────────┴─────────────┘
+
+ Lo que SUM esta sumando:
+ 150.50 + 150.50 + 89.99 + 89.99 + 320.00 + 320.00 = 1120.98
+
+ El valor correcto seria:
+ 150.50 + 89.99 + 320.00 = 560.49
+```
+
+Cada total se sumo **tantas veces como lineas de detalle tiene ese pedido**. El resultado esta duplicado (en este caso, exactamente el doble porque cada pedido tenia 2 detalles).
+
+<Callout type="warning" title="Regla de oro">
+  Cuando haces JOIN entre tablas con relacion uno-a-muchos y luego usas SUM o COUNT, verifica que **no estas sumando valores de la tabla 'uno' que se repiten por la tabla 'muchos'**. Si un pedido aparece N veces en el resultado (por tener N detalles), `SUM(p.total)` sumara ese total N veces.
+</Callout>
+
+### Como corregirlo
+
+**Opcion 1: Quitar el JOIN que causa la multiplicacion** (si no lo necesitas)
+
+```sql
+-- CORRECTO: si solo necesitas el total por cliente, no necesitas detalle_pedidos
+SELECT
+  c.nombre,
+  SUM(p.total) AS gasto_total
+FROM clientes c
+INNER JOIN pedidos p ON c.id = p.cliente_id
+WHERE c.nombre = 'Ana Torres'
+GROUP BY c.nombre;
+```
+
+**Opcion 2: Usar COUNT(DISTINCT) y SUM sobre valores unicos**
+
+```sql
+-- CORRECTO: contar pedidos unicos con DISTINCT
+SELECT
+  c.nombre,
+  COUNT(DISTINCT p.id) AS num_pedidos,
+  -- Para SUM necesitamos otra estrategia (ver opcion 3)
+  COUNT(*) AS filas_en_resultado
+FROM clientes c
+INNER JOIN pedidos p ON c.id = p.cliente_id
+INNER JOIN detalle_pedidos dp ON p.id = dp.pedido_id
+GROUP BY c.nombre;
+```
+
+<Callout type="warning" title="SUM(DISTINCT) no es la solucion">
+  Podrias pensar que `SUM(DISTINCT p.total)` resuelve el problema. No siempre. Si dos pedidos tienen el mismo total (por ejemplo, ambos son 150.50), `SUM(DISTINCT)` contaria ese valor **una sola vez** en lugar de dos, dandote un resultado **menor** al correcto. `DISTINCT` elimina duplicados de valor, no duplicados de fila.
+</Callout>
+
+**Opcion 3: Pre-agregar con una subconsulta o CTE** (la solucion mas segura)
+
+```sql
+-- CORRECTO: primero calcula totales por cliente, luego haz JOIN
+WITH totales_cliente AS (
+  SELECT
+    cliente_id,
+    COUNT(*) AS num_pedidos,
+    SUM(total) AS gasto_total
+  FROM pedidos
+  GROUP BY cliente_id
+)
+SELECT
+  c.nombre,
+  tc.num_pedidos,
+  tc.gasto_total
+FROM clientes c
+INNER JOIN totales_cliente tc ON c.id = tc.cliente_id
+ORDER BY tc.gasto_total DESC;
+```
+
+Al pre-agregar en el CTE, cada cliente aparece **una sola vez** en `totales_cliente`, y el JOIN posterior no genera duplicados.
+
+### Como detectar que tienes duplicados
+
+Antes de confiar en cualquier SUM o COUNT, haz estas verificaciones:
+
+```sql
+-- Verificacion rapida: ¿hay mas filas de las esperadas?
+-- Si tienes 20 pedidos pero tu JOIN devuelve 50 filas, hay multiplicacion.
+SELECT COUNT(*) AS filas_totales
+FROM clientes c
+INNER JOIN pedidos p ON c.id = p.cliente_id
+INNER JOIN detalle_pedidos dp ON p.id = dp.pedido_id;
+
+-- Compara con COUNT(DISTINCT)
+SELECT
+  COUNT(*) AS filas_totales,
+  COUNT(DISTINCT p.id) AS pedidos_unicos,
+  COUNT(DISTINCT c.id) AS clientes_unicos
+FROM clientes c
+INNER JOIN pedidos p ON c.id = p.cliente_id
+INNER JOIN detalle_pedidos dp ON p.id = dp.pedido_id;
+-- Si filas_totales > pedidos_unicos, hay multiplicacion
+```
+
+```sql
+-- Revisa el resultado crudo con LIMIT antes de agregar
+SELECT c.nombre, p.id AS pedido_id, p.total, dp.id AS detalle_id
+FROM clientes c
+INNER JOIN pedidos p ON c.id = p.cliente_id
+INNER JOIN detalle_pedidos dp ON p.id = dp.pedido_id
+ORDER BY c.nombre, p.id
+LIMIT 20;
+-- Busca filas donde pedido_id y total se repiten
+```
+
+<Callout type="tip" title="Habito de verificacion">
+  Antes de agregar `SUM()` o `COUNT(*)` a una consulta con multiples JOINs, **siempre ejecuta primero el SELECT sin agregacion y con LIMIT** para ver las filas crudas. Asi puedes detectar visualmente si hay filas multiplicadas.
+</Callout>
+
+---
+
+## Errores comunes con JOINs
+
+### 1. Olvidar la clausula ON
+
+```sql
+-- PELIGRO: sin ON, esto genera un producto cartesiano
+-- Si tienes 100 clientes y 500 pedidos, obtienes 50,000 filas!
+SELECT c.nombre, p.total
+FROM clientes c
+INNER JOIN pedidos p;
+-- Falta: ON c.id = p.cliente_id
+```
+
+<Callout type="warning" title="Producto cartesiano accidental">
+  Si olvidas el `ON`, cada fila de una tabla se combina con TODAS las filas de la otra. Con tablas de miles de filas, esto puede colgar tu base de datos. Siempre verifica que tu JOIN tenga una clausula ON.
+</Callout>
+
+### 2. Columnas ambiguas
+
+```sql
+-- ERROR: "id" existe en ambas tablas. Cual quieres?
+SELECT id, nombre
+FROM clientes c
+INNER JOIN pedidos p ON c.id = p.cliente_id;
+
+-- CORRECTO: especifica la tabla
+SELECT c.id, c.nombre, p.id AS pedido_id
+FROM clientes c
+INNER JOIN pedidos p ON c.id = p.cliente_id;
+```
+
+### 3. JOIN en la columna equivocada
+
+```sql
+-- INCORRECTO: esto compara IDs que no estan relacionados
+SELECT *
+FROM clientes c
+INNER JOIN productos pr ON c.id = pr.id;
+-- Esto "funciona" pero no tiene sentido logico
+
+-- CORRECTO: usa las relaciones reales de tu modelo
+SELECT *
+FROM clientes c
+INNER JOIN pedidos p ON c.id = p.cliente_id;
+```
+
+### 4. LEFT JOIN que se convierte en INNER JOIN
+
+```sql
+-- INCORRECTO: el WHERE anula el LEFT JOIN
+SELECT c.nombre, p.total, p.estado
+FROM clientes c
+LEFT JOIN pedidos p ON c.id = p.cliente_id
+WHERE p.estado = 'completado';
+-- Clientes sin pedidos completados desaparecen
+-- porque p.estado es NULL para ellos, y NULL != 'completado'
+
+-- CORRECTO: pon la condicion en el ON
+SELECT c.nombre, p.total, p.estado
+FROM clientes c
+LEFT JOIN pedidos p ON c.id = p.cliente_id
+  AND p.estado = 'completado';
+-- Clientes sin pedidos completados aparecen con NULLs
+```
+
+---
+
+## Ejemplo completo: consulta multi-JOIN
+
+Vamos a armar una consulta que conecte varias tablas para obtener un informe completo:
+
+```sql
+-- Informe detallado de ventas: que compro cada cliente
+SELECT
+  c.nombre AS cliente,
+  c.ciudad,
+  p.id AS pedido_id,
+  p.fecha,
+  pr.nombre AS producto,
+  pr.categoria,
+  dp.cantidad,
+  dp.precio_unitario,
+  (dp.cantidad * dp.precio_unitario) AS subtotal
+FROM clientes c
+INNER JOIN pedidos p ON c.id = p.cliente_id
+INNER JOIN detalle_pedidos dp ON p.id = dp.pedido_id
+INNER JOIN productos pr ON dp.producto_id = pr.id
+WHERE p.estado = 'completado'
+ORDER BY c.nombre, p.fecha DESC;
+```
+
+Y un resumen por cliente usando un CTE para evitar el problema de duplicados:
+
+```sql
+-- Total gastado por cada cliente (sin riesgo de duplicados)
+WITH resumen_pedidos AS (
+  SELECT
+    cliente_id,
+    COUNT(*) AS num_pedidos,
+    SUM(total) AS gasto_total,
+    ROUND(AVG(total), 2) AS pedido_promedio
+  FROM pedidos
+  WHERE estado = 'completado'
+  GROUP BY cliente_id
+)
+SELECT
+  c.nombre AS cliente,
+  c.ciudad,
+  rp.num_pedidos,
+  rp.gasto_total,
+  rp.pedido_promedio
+FROM clientes c
+INNER JOIN resumen_pedidos rp ON c.id = rp.cliente_id
+WHERE rp.gasto_total > 500
+ORDER BY rp.gasto_total DESC;
+```
+
+---
+
+## Rendimiento de los JOINs
+
+<Callout type="performance" title="Complejidad de los JOINs">
+  En el peor caso, un JOIN entre una tabla de `n` filas y otra de `m` filas es **O(n * m)** (nested loop: comparar cada fila con cada fila). Con tablas de 10,000 filas cada una, eso podria ser 100 millones de comparaciones. Por eso los indices son tan importantes.
+</Callout>
+
+### Estrategias de JOIN que usa PostgreSQL
+
+PostgreSQL elige automaticamente entre tres estrategias:
+
+**1. Nested Loop Join** — Para cada fila de la tabla A, busca coincidencias en la tabla B.
+- Sin indice: O(n * m) — lento
+- Con indice: O(n * log m) — mucho mejor
+- Bueno cuando una tabla es pequena
+
+**2. Hash Join** — Construye una tabla hash con una tabla y busca las coincidencias de la otra.
+- Complejidad: O(n + m) — muy eficiente
+- Necesita memoria para la tabla hash
+- Bueno cuando ambas tablas son grandes
+
+**3. Merge Join** — Ordena ambas tablas y las recorre en paralelo.
+- Complejidad: O(n log n + m log m) para ordenar, luego O(n + m) para el merge
+- Bueno cuando los datos ya estan ordenados (por un indice)
+
+```sql
+-- Puedes ver que estrategia elige PostgreSQL con EXPLAIN
+EXPLAIN SELECT c.nombre, p.total
+FROM clientes c
+INNER JOIN pedidos p ON c.id = p.cliente_id;
+```
+
+<Callout type="performance" title="Lo mas importante para JOINs rapidos">
+  Asegurate de que las columnas en tu clausula `ON` tengan **indices**. Las claves primarias (`id`) ya tienen indice automaticamente. Las claves foraneas (`cliente_id`, `pedido_id`, `producto_id`) **deberias agregarles un indice** si no lo tienen. Esto puede hacer la diferencia entre un JOIN que tarda milisegundos y uno que tarda minutos.
+</Callout>
+
+### Consejo practico: minimiza las filas antes del JOIN
+
+```sql
+-- PostgreSQL generalmente optimiza esto automaticamente,
+-- pero reducir las filas antes del JOIN siempre ayuda.
+SELECT c.nombre, p.total
+FROM pedidos p
+INNER JOIN clientes c ON p.cliente_id = c.id
+WHERE p.fecha >= '2024-01-01'
+  AND p.estado = 'completado';
+```
+
+---
+
+## Ejercicios
+
+**Ejercicio 1:** Muestra el nombre de cada cliente junto con la fecha y total de sus pedidos. Usa INNER JOIN.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+  c.nombre AS cliente,
+  p.fecha,
+  p.total
+FROM clientes c
+INNER JOIN pedidos p ON c.id = p.cliente_id
+ORDER BY c.nombre, p.fecha;
+```
+</details>
+
+**Ejercicio 2:** Muestra TODOS los clientes y cuantos pedidos tiene cada uno (incluyendo los que tienen 0 pedidos).
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+  c.nombre AS cliente,
+  COUNT(p.id) AS num_pedidos
+FROM clientes c
+LEFT JOIN pedidos p ON c.id = p.cliente_id
+GROUP BY c.id, c.nombre
+ORDER BY num_pedidos DESC;
+```
+
+Usamos `LEFT JOIN` para incluir clientes sin pedidos, y `COUNT(p.id)` en vez de `COUNT(*)` para que los clientes sin pedidos tengan 0 (porque `p.id` sera NULL y COUNT no cuenta NULLs).
+</details>
+
+**Ejercicio 3:** Encuentra todos los productos que **nunca** se han vendido (no aparecen en detalle_pedidos).
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT pr.nombre, pr.precio, pr.categoria
+FROM productos pr
+LEFT JOIN detalle_pedidos dp ON pr.id = dp.producto_id
+WHERE dp.id IS NULL;
+```
+</details>
+
+**Ejercicio 4:** Muestra cada empleado junto con el nombre de su jefe. Incluye empleados sin jefe (mostrando NULL).
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+  e.nombre AS empleado,
+  e.departamento,
+  e.salario,
+  j.nombre AS jefe
+FROM empleados e
+LEFT JOIN empleados j ON e.jefe_id = j.id
+ORDER BY j.nombre NULLS FIRST, e.nombre;
+```
+</details>
+
+**Ejercicio 5:** Muestra un informe con: nombre del cliente, nombre del producto, cantidad y precio unitario, para todos los pedidos con estado 'completado'. Necesitas conectar 4 tablas.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+  c.nombre AS cliente,
+  pr.nombre AS producto,
+  dp.cantidad,
+  dp.precio_unitario,
+  (dp.cantidad * dp.precio_unitario) AS subtotal
+FROM clientes c
+INNER JOIN pedidos p ON c.id = p.cliente_id
+INNER JOIN detalle_pedidos dp ON p.id = dp.pedido_id
+INNER JOIN productos pr ON dp.producto_id = pr.id
+WHERE p.estado = 'completado'
+ORDER BY c.nombre, pr.nombre;
+```
+</details>
+
+**Ejercicio 6:** Para cada categoria de producto, muestra la cantidad total de unidades vendidas. Incluye categorias con 0 ventas.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+  pr.categoria,
+  COALESCE(SUM(dp.cantidad), 0) AS unidades_vendidas
+FROM productos pr
+LEFT JOIN detalle_pedidos dp ON pr.id = dp.producto_id
+GROUP BY pr.categoria
+ORDER BY unidades_vendidas DESC;
+```
+</details>
+
+**Ejercicio 7:** Encuentra los clientes que han gastado mas de 1000 en total, mostrando su nombre, ciudad, numero de pedidos y gasto total. Solo incluye pedidos completados.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+  c.nombre,
+  c.ciudad,
+  COUNT(p.id) AS num_pedidos,
+  SUM(p.total) AS gasto_total
+FROM clientes c
+INNER JOIN pedidos p ON c.id = p.cliente_id
+WHERE p.estado = 'completado'
+GROUP BY c.id, c.nombre, c.ciudad
+HAVING SUM(p.total) > 1000
+ORDER BY gasto_total DESC;
+```
+
+Esta consulta combina JOIN, WHERE, GROUP BY, HAVING y ORDER BY.
+</details>
+
+**Ejercicio 8 (Desafio):** Quieres saber cuantos productos distintos ha comprado cada cliente y el total gastado. Pero cuidado: si haces JOIN de pedidos con detalle_pedidos, los totales se pueden inflar. Usa un CTE para evitar el problema.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+-- Paso 1: total gastado por cliente (sin duplicados)
+WITH gasto_cliente AS (
+  SELECT
+    cliente_id,
+    SUM(total) AS gasto_total
+  FROM pedidos
+  WHERE estado = 'completado'
+  GROUP BY cliente_id
+),
+-- Paso 2: productos distintos por cliente
+productos_cliente AS (
+  SELECT
+    p.cliente_id,
+    COUNT(DISTINCT dp.producto_id) AS productos_distintos
+  FROM pedidos p
+  INNER JOIN detalle_pedidos dp ON p.id = dp.pedido_id
+  WHERE p.estado = 'completado'
+  GROUP BY p.cliente_id
+)
+SELECT
+  c.nombre,
+  c.ciudad,
+  pc.productos_distintos,
+  gc.gasto_total
+FROM clientes c
+INNER JOIN gasto_cliente gc ON c.id = gc.cliente_id
+INNER JOIN productos_cliente pc ON c.id = pc.cliente_id
+ORDER BY gc.gasto_total DESC;
+```
+
+Al pre-agregar en CTEs separados, cada cliente aparece una sola vez en cada CTE. El JOIN final no genera duplicados y los totales son correctos.
+</details>

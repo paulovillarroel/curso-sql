@@ -1,0 +1,856 @@
+import Callout from "../components/Callout.astro"
+import CommandTable from "../components/CommandTable.astro"
+
+Llegamos al modulo mas importante del curso. En serio. Puedes saber escribir SQL perfecto, pero si tus consultas tardan 30 segundos en una tabla con millones de filas, tienes un problema gordo. En este modulo vas a aprender **como piensa PostgreSQL** cuando ejecuta tus consultas y, mas importante, **como hacer que piense mas rapido**.
+
+---
+
+### Como ejecuta PostgreSQL una consulta
+
+Cuando escribes una consulta SQL y presionas Enter, PostgreSQL no la ejecuta directamente. Pasa por varias etapas:
+
+1. **Parsing**: Verifica que tu SQL sea valido sintacticamente. Si escribiste `SLECT` en vez de `SELECT`, aqui muere.
+2. **Rewriting**: Aplica reglas internas (como expandir vistas).
+3. **Planning/Optimizing**: El **planificador** analiza multiples estrategias para ejecutar tu consulta y elige la que estima que sera mas barata.
+4. **Execution**: Ejecuta el plan elegido y te devuelve los resultados.
+
+La etapa clave es la 3. PostgreSQL tiene un **optimizador basado en costos**: calcula cuanto "costaria" cada estrategia posible y elige la mas barata. Y aqui es donde tu puedes influir enormemente.
+
+<Callout type="info" title="Analogia">
+Imagina que necesitas ir del punto A al punto B en una ciudad. Puedes ir caminando (lento pero seguro), en auto por la autopista (rapido si no hay trafico), o en metro (rapido pero con transbordos). El planificador de PostgreSQL hace exactamente esto: evalua las rutas posibles y elige la mejor segun las condiciones actuales.
+</Callout>
+
+---
+
+### EXPLAIN: Tu herramienta de diagnostico
+
+`EXPLAIN` es el estetoscopio del desarrollador SQL. Te muestra **que plan eligio PostgreSQL** sin ejecutar la consulta:
+
+```sql
+EXPLAIN SELECT * FROM productos WHERE precio > 100;
+```
+
+Resultado tipico:
+
+```
+Seq Scan on productos  (cost=0.00..25.00 rows=500 width=64)
+  Filter: (precio > 100)
+```
+
+Vamos a desmenuzar esto:
+
+- **Seq Scan on productos**: Va a leer la tabla completa, fila por fila (Sequential Scan).
+- **cost=0.00..25.00**: Costo estimado. El primer numero es el costo de arranque, el segundo es el costo total.
+- **rows=500**: Estima que devolvera 500 filas.
+- **width=64**: Cada fila ocupa aproximadamente 64 bytes.
+
+Para ver que **realmente** pasa (con tiempos reales), usa `EXPLAIN ANALYZE`:
+
+```sql
+EXPLAIN ANALYZE SELECT * FROM productos WHERE precio > 100;
+```
+
+```
+Seq Scan on productos  (cost=0.00..25.00 rows=500 width=64)
+                       (actual time=0.015..0.320 rows=487 loops=1)
+  Filter: (precio > 100)
+  Rows Removed by Filter: 513
+Planning Time: 0.085 ms
+Execution Time: 0.450 ms
+```
+
+Ahora ves datos reales:
+- **actual time=0.015..0.320**: Tardo 0.015 ms en devolver la primera fila y 0.320 ms en total.
+- **rows=487**: Devolvio 487 filas realmente (el estimado era 500, bastante cerca).
+- **Rows Removed by Filter: 513**: Leyo 513 filas que no cumplian el filtro. Eso es trabajo desperdiciado.
+- **Planning Time**: Cuanto tardo en elegir el plan.
+- **Execution Time**: Cuanto tardo en ejecutarlo.
+
+<Callout type="warning" title="Cuidado con EXPLAIN ANALYZE">
+`EXPLAIN ANALYZE` **si ejecuta la consulta**. Si haces `EXPLAIN ANALYZE DELETE FROM clientes;`... si, borra todos los clientes. Para consultas destructivas, usa solo `EXPLAIN` (sin ANALYZE) o envuelve en una transaccion que luego haces rollback:
+
+```sql
+BEGIN;
+EXPLAIN ANALYZE DELETE FROM clientes WHERE ciudad = 'Test';
+ROLLBACK;
+```
+</Callout>
+
+---
+
+### Tipos de escaneo: como lee PostgreSQL tus datos
+
+#### Sequential Scan (Seq Scan)
+
+Lee **toda la tabla**, fila por fila. Es como leer un libro de principio a fin buscando una palabra.
+
+```sql
+EXPLAIN SELECT * FROM productos;
+```
+```
+Seq Scan on productos  (cost=0.00..22.00 rows=1000 width=64)
+```
+
+Para tablas pequenas o cuando necesitas la mayoria de las filas, esto esta bien. El problema es cuando la tabla tiene millones de filas y solo necesitas unas pocas.
+
+**Complejidad: O(n)** - Tiene que mirar cada fila.
+
+#### Index Scan
+
+Usa un indice para ir **directamente** a las filas que necesita. Es como usar el indice de un libro para encontrar un tema especifico.
+
+```sql
+-- Suponiendo que existe un indice en la columna precio
+EXPLAIN SELECT * FROM productos WHERE precio = 99.99;
+```
+```
+Index Scan using idx_productos_precio on productos  (cost=0.28..8.30 rows=1 width=64)
+  Index Cond: (precio = 99.99)
+```
+
+Mucho mas rapido. En vez de leer 1000 filas, va directo a las que cumplen la condicion.
+
+**Complejidad: O(log n)** - Busqueda en el arbol del indice.
+
+#### Index Only Scan
+
+Aun mejor que Index Scan. Si toda la informacion que necesitas **esta en el indice**, PostgreSQL ni siquiera necesita ir a la tabla:
+
+```sql
+-- Con un indice en (precio)
+EXPLAIN SELECT precio FROM productos WHERE precio > 100;
+```
+```
+Index Only Scan using idx_productos_precio on productos  (cost=0.28..12.50 rows=500 width=8)
+  Index Cond: (precio > 100)
+```
+
+**Complejidad: O(log n + k)** donde k es el numero de resultados.
+
+#### Bitmap Index Scan + Bitmap Heap Scan
+
+Un enfoque hibrido. Primero usa el indice para crear un "mapa de bits" de las paginas que contienen filas relevantes, luego lee esas paginas:
+
+```sql
+EXPLAIN SELECT * FROM productos WHERE precio BETWEEN 50 AND 150;
+```
+```
+Bitmap Heap Scan on productos  (cost=5.00..20.00 rows=300 width=64)
+  Recheck Cond: (precio >= 50 AND precio <= 150)
+  ->  Bitmap Index Scan on idx_productos_precio  (cost=0.00..4.93 rows=300 width=0)
+        Index Cond: (precio >= 50 AND precio <= 150)
+```
+
+PostgreSQL elige esto cuando hay **muchas filas que coinciden** pero no tantas como para justificar un Seq Scan completo.
+
+<Callout type="performance" title="Cuando usa cada tipo de escaneo">
+- **Seq Scan**: Tablas pequenas o cuando se necesita >10-15% de las filas.
+- **Index Scan**: Pocas filas coinciden y necesitas columnas que no estan en el indice.
+- **Index Only Scan**: Pocas filas coinciden y todas las columnas estan en el indice.
+- **Bitmap Scan**: Numero moderado de filas coinciden (entre lo que justifica Index Scan y Seq Scan).
+</Callout>
+
+---
+
+### Indices: el turbo de tus consultas
+
+Un indice es como el indice al final de un libro. En vez de leer todo el libro para encontrar "PostgreSQL", vas al indice, buscas la P, y te dice exactamente en que paginas aparece.
+
+En PostgreSQL, el tipo de indice mas comun es el **B-tree** (arbol balanceado). Imagina un arbol donde:
+
+- La raiz te dice "los valores menores a 500 estan a la izquierda, los mayores a la derecha"
+- Cada nivel refina mas la busqueda
+- Las hojas contienen los valores reales y un puntero a la fila de la tabla
+
+```
+            [500]
+           /     \
+      [200,350]   [700,900]
+      /   |   \    /   |   \
+   [filas] ... [filas] ... [filas]
+```
+
+Esto permite encontrar cualquier valor en **O(log n)**. En una tabla con 1 millon de filas, un B-tree necesita solo unas 20 comparaciones para encontrar una fila, en vez de revisar el millon completo.
+
+#### Crear un indice
+
+```sql
+-- Indice simple
+CREATE INDEX idx_productos_precio ON productos(precio);
+
+-- Indice en multiples columnas (compuesto)
+CREATE INDEX idx_productos_cat_precio ON productos(categoria, precio);
+
+-- Indice unico
+CREATE UNIQUE INDEX idx_clientes_email ON clientes(email);
+```
+
+<Callout type="info" title="Dato">
+PostgreSQL crea automaticamente un indice para cada PRIMARY KEY y cada restriccion UNIQUE. No necesitas crearlos manualmente.
+</Callout>
+
+#### Cuando los indices ayudan
+
+Los indices son geniales para:
+
+```sql
+-- Busquedas por igualdad
+SELECT * FROM clientes WHERE email = 'ana@mail.com';
+
+-- Busquedas por rango
+SELECT * FROM productos WHERE precio BETWEEN 10 AND 50;
+
+-- Ordenamiento
+SELECT * FROM productos ORDER BY precio LIMIT 10;
+
+-- JOINs (en las columnas de union)
+SELECT c.nombre, p.total
+FROM clientes c
+JOIN pedidos p ON c.id = p.cliente_id;
+```
+
+#### Cuando los indices NO ayudan
+
+```sql
+-- Tablas muy pequenas (el Seq Scan es mas rapido)
+SELECT * FROM categorias; -- si tiene 10 filas, un indice estorba
+
+-- Cuando seleccionas la mayoria de las filas
+SELECT * FROM productos WHERE stock > 0; -- si el 95% tiene stock, no sirve
+
+-- Cuando usas funciones sobre la columna indexada
+SELECT * FROM clientes WHERE UPPER(nombre) = 'ANA'; -- NO usa el indice en nombre
+SELECT * FROM clientes WHERE nombre = 'Ana';         -- SI usa el indice
+
+-- Cuando usas LIKE con comodin al inicio
+SELECT * FROM productos WHERE nombre LIKE '%laptop%'; -- NO usa indice
+SELECT * FROM productos WHERE nombre LIKE 'Laptop%';  -- SI puede usar indice
+```
+
+<Callout type="warning" title="Regla de oro">
+Si aplicas una funcion a una columna indexada en el WHERE, **el indice no se usa**. Esto es uno de los errores mas comunes. En vez de `WHERE UPPER(nombre) = 'ANA'`, crea un indice funcional: `CREATE INDEX idx_nombre_upper ON clientes(UPPER(nombre));`
+</Callout>
+
+---
+
+### Algoritmos de JOIN
+
+Cuando haces un JOIN, PostgreSQL tiene tres estrategias principales:
+
+#### Nested Loop Join
+
+Para **cada fila** de la tabla A, recorre **todas las filas** de la tabla B buscando coincidencias.
+
+```
+Para cada fila en clientes:         -- n filas
+    Para cada fila en pedidos:      -- m filas
+        Si coincide, emitir fila
+```
+
+**Complejidad: O(n * m)** sin indice, **O(n * log m)** con indice en la tabla interna.
+
+Es bueno cuando una de las tablas es **muy pequena** o cuando hay un indice en la columna de JOIN de la tabla interna.
+
+```sql
+EXPLAIN ANALYZE
+SELECT c.nombre, p.total
+FROM clientes c
+JOIN pedidos p ON c.id = p.cliente_id
+WHERE c.ciudad = 'Madrid';
+```
+```
+Nested Loop  (cost=0.29..45.50 rows=15 actual time=0.020..0.150)
+  ->  Seq Scan on clientes c  (cost=0.00..12.00 rows=5 actual time=0.010..0.030)
+        Filter: (ciudad = 'Madrid')
+  ->  Index Scan using idx_pedidos_cliente on pedidos p  (cost=0.29..6.50 rows=3 actual time=0.010..0.020)
+        Index Cond: (cliente_id = c.id)
+```
+
+Solo 5 clientes de Madrid, y para cada uno busca sus pedidos por indice. Rapido.
+
+#### Hash Join
+
+Construye una **tabla hash** en memoria con la tabla mas pequena, y luego recorre la tabla grande buscando en el hash:
+
+```
+1. Construir hash de clientes (tabla pequena)
+2. Para cada fila en pedidos:
+      Buscar en hash si existe cliente_id
+```
+
+**Complejidad: O(n + m)** - Construir el hash es O(n), recorrer la otra tabla es O(m).
+
+```sql
+EXPLAIN ANALYZE
+SELECT c.nombre, p.total
+FROM clientes c
+JOIN pedidos p ON c.id = p.cliente_id;
+```
+```
+Hash Join  (cost=15.00..52.00 rows=1000 actual time=0.200..1.500)
+  Hash Cond: (p.cliente_id = c.id)
+  ->  Seq Scan on pedidos p  (cost=0.00..30.00 rows=1000)
+  ->  Hash  (cost=12.00..12.00 rows=200)
+        ->  Seq Scan on clientes c  (cost=0.00..12.00 rows=200)
+```
+
+Ideal para JOINs grandes donde no hay indice pero una tabla cabe en memoria.
+
+#### Merge Join
+
+Ordena **ambas tablas** por la columna de JOIN y luego las recorre en paralelo (como mezclar dos mazos de cartas ya ordenados):
+
+```
+1. Ordenar clientes por id
+2. Ordenar pedidos por cliente_id
+3. Recorrer ambas listas en paralelo, emitiendo coincidencias
+```
+
+**Complejidad: O(n log n + m log m)** por la ordenacion, luego O(n + m) para el merge.
+
+```sql
+Merge Join  (cost=80.00..120.00 rows=1000)
+  Merge Cond: (c.id = p.cliente_id)
+  ->  Sort  (cost=30.00..32.00 rows=200)
+        Sort Key: c.id
+        ->  Seq Scan on clientes c
+  ->  Sort  (cost=50.00..55.00 rows=1000)
+        Sort Key: p.cliente_id
+        ->  Seq Scan on pedidos p
+```
+
+Es eficiente cuando ambas tablas son grandes y ya estan (o pueden ser) ordenadas.
+
+<CommandTable commands={[
+  { command: "Nested Loop", description: "Una tabla muy pequena o hay indice en la tabla interna" },
+  { command: "Hash Join", description: "Tablas medianas/grandes sin indice, una cabe en memoria" },
+  { command: "Merge Join", description: "Tablas grandes ya ordenadas o cuando el resultado debe estar ordenado" },
+]} />
+
+---
+
+### Indices compuestos y orden de columnas
+
+Un indice compuesto tiene multiples columnas. El **orden importa muchisimo**:
+
+```sql
+CREATE INDEX idx_prod_cat_precio ON productos(categoria, precio);
+```
+
+Este indice es util para:
+
+```sql
+-- Filtra por categoria (primera columna): SI usa el indice
+SELECT * FROM productos WHERE categoria = 'Electronica';
+
+-- Filtra por categoria Y precio: SI usa el indice (ambas columnas)
+SELECT * FROM productos WHERE categoria = 'Electronica' AND precio < 500;
+
+-- Filtra SOLO por precio (segunda columna): NO usa el indice eficientemente
+SELECT * FROM productos WHERE precio < 500;
+```
+
+<Callout type="tip" title="Regla del prefijo izquierdo">
+Un indice compuesto `(A, B, C)` sirve para consultas que filtran por:
+- A
+- A y B
+- A, B y C
+
+Pero **no** para consultas que filtran solo por B, solo por C, o por B y C sin A. Piensa en una guia telefonica ordenada por (apellido, nombre): puedes buscar por apellido, o por apellido + nombre, pero no puedes buscar eficientemente solo por nombre.
+</Callout>
+
+Veamos el impacto con EXPLAIN:
+
+```sql
+-- Con indice en (categoria, precio)
+EXPLAIN ANALYZE SELECT * FROM productos
+WHERE categoria = 'Electronica' AND precio < 500;
+```
+```
+Index Scan using idx_prod_cat_precio on productos
+  (cost=0.28..15.00 rows=45 actual time=0.020..0.150)
+  Index Cond: (categoria = 'Electronica' AND precio < 500)
+```
+
+```sql
+-- Consulta que NO aprovecha el indice compuesto
+EXPLAIN ANALYZE SELECT * FROM productos WHERE precio < 500;
+```
+```
+Seq Scan on productos  (cost=0.00..25.00 rows=800 actual time=0.010..0.400)
+  Filter: (precio < 500)
+```
+
+La primera consulta usa el indice y escanea solo 45 filas. La segunda hace Seq Scan y lee toda la tabla.
+
+---
+
+### Covering indexes (indices cubrientes)
+
+Un covering index incluye **todas las columnas** que tu consulta necesita. Esto permite un **Index Only Scan**, que es el escaneo mas rapido posible porque nunca necesita ir a la tabla:
+
+```sql
+-- Queremos ejecutar frecuentemente esta consulta:
+SELECT nombre, precio FROM productos WHERE categoria = 'Electronica';
+
+-- Creamos un indice que "cubra" todas las columnas necesarias:
+CREATE INDEX idx_prod_covering ON productos(categoria) INCLUDE (nombre, precio);
+```
+
+```sql
+EXPLAIN ANALYZE SELECT nombre, precio FROM productos WHERE categoria = 'Electronica';
+```
+```
+Index Only Scan using idx_prod_covering on productos
+  (cost=0.28..5.50 rows=50 actual time=0.015..0.080)
+  Index Cond: (categoria = 'Electronica')
+  Heap Fetches: 0
+```
+
+**Heap Fetches: 0** significa que NO tuvo que ir a la tabla para nada. Todo estaba en el indice.
+
+<Callout type="performance">
+Un `Index Only Scan` con `Heap Fetches: 0` es practicamente lo mas rapido que puedes lograr. Pero ten cuidado: los covering indexes ocupan mas espacio y hacen los INSERT/UPDATE mas lentos.
+</Callout>
+
+---
+
+### El costo de los indices
+
+Los indices no son gratis. Cada indice:
+
+1. **Ocupa espacio en disco**: Un indice puede ocupar tanto como la tabla misma.
+2. **Hace mas lento el INSERT**: Cada fila nueva debe insertarse en la tabla Y en cada indice.
+3. **Hace mas lento el UPDATE**: Si actualizas una columna indexada, el indice tambien se actualiza.
+4. **Hace mas lento el DELETE**: Igual, hay que actualizar el indice.
+
+```sql
+-- Ver el tamano de tus indices
+SELECT
+    indexname,
+    pg_size_pretty(pg_relation_size(indexname::regclass)) AS tamano
+FROM pg_indexes
+WHERE tablename = 'productos';
+```
+
+<Callout type="warning" title="No indexes todo">
+No crees un indice en cada columna "por si acaso". Analiza que consultas se ejecutan frecuentemente, usa EXPLAIN, y crea indices solo donde realmente se necesiten. Un indice que no se usa es puro desperdicio.
+</Callout>
+
+---
+
+### Tips de optimizacion de consultas
+
+Aqui van las tecnicas mas efectivas para escribir consultas rapidas:
+
+#### 1. Selecciona solo las columnas que necesitas
+
+```sql
+-- Malo: trae TODAS las columnas
+SELECT * FROM productos WHERE categoria = 'Electronica';
+
+-- Bueno: trae solo lo necesario
+SELECT nombre, precio FROM productos WHERE categoria = 'Electronica';
+```
+
+Menos columnas = menos datos transferidos = mas rapido. Ademas, permite usar Index Only Scan.
+
+#### 2. Filtra temprano con WHERE
+
+```sql
+-- Malo: primero une todo, luego filtra
+SELECT c.nombre, SUM(p.total)
+FROM clientes c
+JOIN pedidos p ON c.id = p.cliente_id
+GROUP BY c.nombre
+HAVING c.nombre LIKE 'A%';
+
+-- Bueno: filtra antes de unir
+SELECT c.nombre, SUM(p.total)
+FROM clientes c
+JOIN pedidos p ON c.id = p.cliente_id
+WHERE c.nombre LIKE 'A%'
+GROUP BY c.nombre;
+```
+
+#### 3. Evita funciones en columnas indexadas
+
+```sql
+-- Malo: la funcion impide usar el indice
+SELECT * FROM pedidos WHERE EXTRACT(YEAR FROM fecha) = 2024;
+
+-- Bueno: rango que SI usa el indice
+SELECT * FROM pedidos
+WHERE fecha >= '2024-01-01' AND fecha < '2025-01-01';
+```
+
+#### 4. Usa EXISTS en vez de IN para subconsultas grandes
+
+```sql
+-- Mas lento con tablas grandes
+SELECT * FROM clientes
+WHERE id IN (SELECT cliente_id FROM pedidos);
+
+-- Mas rapido: EXISTS se detiene en la primera coincidencia
+SELECT * FROM clientes c
+WHERE EXISTS (SELECT 1 FROM pedidos p WHERE p.cliente_id = c.id);
+```
+
+<Callout type="performance" title="Por que EXISTS es mas rapido">
+`IN` necesita materializar toda la subconsulta primero. `EXISTS` se detiene tan pronto encuentra la primera coincidencia para cada fila. Si un cliente tiene 100 pedidos, IN los encuentra todos, EXISTS encuentra el primero y sigue con el siguiente cliente.
+</Callout>
+
+#### 5. Prefiere JOINs sobre subconsultas correlacionadas
+
+```sql
+-- Malo: subconsulta se ejecuta una vez POR CADA cliente
+SELECT c.nombre,
+       (SELECT COUNT(*) FROM pedidos p WHERE p.cliente_id = c.id) AS total_pedidos
+FROM clientes c;
+
+-- Bueno: un solo JOIN con agregacion
+SELECT c.nombre, COUNT(p.id) AS total_pedidos
+FROM clientes c
+LEFT JOIN pedidos p ON c.id = p.cliente_id
+GROUP BY c.nombre;
+```
+
+#### 6. Usa LIMIT cuando no necesitas todas las filas
+
+```sql
+-- Si solo quieres los 10 productos mas caros:
+SELECT nombre, precio FROM productos ORDER BY precio DESC LIMIT 10;
+```
+
+Con un indice en `precio`, esto es practicamente instantaneo porque no necesita ordenar toda la tabla.
+
+#### 7. Operaciones masivas vs fila por fila
+
+```sql
+-- Malo: insertar uno por uno (en un loop de aplicacion)
+INSERT INTO productos (nombre, precio) VALUES ('Producto 1', 10);
+INSERT INTO productos (nombre, precio) VALUES ('Producto 2', 20);
+INSERT INTO productos (nombre, precio) VALUES ('Producto 3', 30);
+
+-- Bueno: insertar todo de una vez
+INSERT INTO productos (nombre, precio) VALUES
+  ('Producto 1', 10),
+  ('Producto 2', 20),
+  ('Producto 3', 30);
+```
+
+El INSERT masivo es dramaticamente mas rapido porque reduce la sobrecarga de comunicacion con la base de datos.
+
+---
+
+### Ejemplo completo: optimizando una consulta paso a paso
+
+Supongamos que tenemos esta consulta lenta:
+
+```sql
+-- Consulta original
+SELECT c.nombre, c.email, COUNT(*) AS total_pedidos, SUM(p.total) AS gasto_total
+FROM clientes c, pedidos p
+WHERE c.id = p.cliente_id
+  AND UPPER(c.ciudad) = 'MADRID'
+  AND EXTRACT(YEAR FROM p.fecha) = 2024
+GROUP BY c.nombre, c.email
+ORDER BY gasto_total DESC;
+```
+
+Veamos el EXPLAIN:
+
+```sql
+EXPLAIN ANALYZE SELECT c.nombre, c.email, COUNT(*), SUM(p.total)
+FROM clientes c, pedidos p
+WHERE c.id = p.cliente_id
+  AND UPPER(c.ciudad) = 'MADRID'
+  AND EXTRACT(YEAR FROM p.fecha) = 2024
+GROUP BY c.nombre, c.email
+ORDER BY SUM(p.total) DESC;
+```
+```
+Sort  (cost=150.00..151.00 rows=50)
+  Sort Key: (sum(p.total)) DESC
+  ->  HashAggregate  (cost=140.00..145.00 rows=50)
+        ->  Hash Join  (cost=15.00..130.00 rows=200)
+              Hash Cond: (p.cliente_id = c.id)
+              ->  Seq Scan on pedidos p  (cost=0.00..100.00 rows=2000)
+                    Filter: (EXTRACT(YEAR FROM fecha) = 2024)
+              ->  Hash  (cost=12.00..12.00 rows=50)
+                    ->  Seq Scan on clientes c  (cost=0.00..12.00 rows=50)
+                          Filter: (upper(ciudad) = 'MADRID')
+Planning Time: 0.200 ms
+Execution Time: 5.500 ms
+```
+
+**Problemas identificados:**
+1. Seq Scan en pedidos con filtro por funcion (`EXTRACT`)
+2. Seq Scan en clientes con filtro por funcion (`UPPER`)
+3. JOIN implicito (estilo viejo con coma)
+
+**Optimizacion paso a paso:**
+
+```sql
+-- Paso 1: Usar JOIN explicito y evitar funciones en WHERE
+SELECT c.nombre, c.email, COUNT(*) AS total_pedidos, SUM(p.total) AS gasto_total
+FROM clientes c
+JOIN pedidos p ON c.id = p.cliente_id
+WHERE c.ciudad = 'Madrid'
+  AND p.fecha >= '2024-01-01' AND p.fecha < '2025-01-01'
+GROUP BY c.nombre, c.email
+ORDER BY gasto_total DESC;
+```
+
+```sql
+-- Paso 2: Crear indices utiles
+CREATE INDEX idx_clientes_ciudad ON clientes(ciudad);
+CREATE INDEX idx_pedidos_fecha_cliente ON pedidos(fecha, cliente_id);
+```
+
+Ahora el EXPLAIN muestra:
+
+```
+Sort  (cost=25.00..25.50 rows=50)
+  Sort Key: (sum(p.total)) DESC
+  ->  HashAggregate  (cost=20.00..22.00 rows=50)
+        ->  Nested Loop  (cost=1.00..18.00 rows=80)
+              ->  Index Scan using idx_clientes_ciudad on clientes c  (cost=0.28..5.00 rows=15)
+                    Index Cond: (ciudad = 'Madrid')
+              ->  Index Scan using idx_pedidos_fecha_cliente on pedidos p  (cost=0.29..0.80 rows=5)
+                    Index Cond: (fecha >= '2024-01-01' AND fecha < '2025-01-01' AND cliente_id = c.id)
+Planning Time: 0.300 ms
+Execution Time: 0.450 ms
+```
+
+De **5.5 ms a 0.45 ms**. Mas de 12 veces mas rapido. Y en tablas con millones de filas, la diferencia seria de minutos a milisegundos.
+
+---
+
+### Tabla resumen de complejidad
+
+<CommandTable commands={[
+  { command: "Busqueda por clave primaria (con indice)", description: "**O(log n)** - Muy rapido" },
+  { command: "Index Scan", description: "**O(log n + k)** - k = filas devueltas" },
+  { command: "Sequential Scan", description: "**O(n)** - Lee toda la tabla" },
+  { command: "Ordenar sin indice (Sort)", description: "**O(n log n)**" },
+  { command: "Hash Join", description: "**O(n + m)** - Ambas tablas" },
+  { command: "Merge Join", description: "**O(n log n + m log m)** - Por la ordenacion" },
+  { command: "Nested Loop (sin indice)", description: "**O(n * m)** - Producto cartesiano" },
+  { command: "Nested Loop (con indice)", description: "**O(n * log m)** - Mucho mejor" },
+]} />
+
+<Callout type="tip" title="Interpretacion practica">
+Con 1 millon de filas:
+- **O(log n)** ~ 20 operaciones
+- **O(n)** ~ 1,000,000 operaciones
+- **O(n log n)** ~ 20,000,000 operaciones
+- **O(n * m)** con m = 1,000,000 ~ 1,000,000,000,000 operaciones
+
+La diferencia entre O(log n) y O(n) es literalmente la diferencia entre milisegundos y minutos.
+</Callout>
+
+---
+
+### VACUUM y ANALYZE: mantenimiento de la base
+
+PostgreSQL necesita mantenimiento periodico:
+
+- **VACUUM**: Recupera espacio de filas eliminadas o actualizadas. PostgreSQL no borra filas fisicamente al hacer DELETE; las marca como "muertas". VACUUM limpia esas filas muertas.
+- **ANALYZE**: Actualiza las estadisticas que usa el planificador para estimar costos. Si las estadisticas estan desactualizadas, el planificador puede elegir planes malos.
+
+```sql
+-- Ejecutar manualmente (normalmente lo hace autovacuum automaticamente)
+VACUUM ANALYZE productos;
+```
+
+<Callout type="info">
+PostgreSQL tiene un proceso llamado **autovacuum** que ejecuta VACUUM y ANALYZE automaticamente. En la mayoria de los casos no necesitas hacerlo manualmente, pero es bueno saber que existe por si diagnosticas problemas de rendimiento.
+</Callout>
+
+---
+
+### Ejercicios
+
+**Ejercicio 1**: Mira este EXPLAIN y responde: que tipo de escaneo se esta usando? Es eficiente para una tabla con 10 millones de filas?
+
+```
+Seq Scan on pedidos  (cost=0.00..250000.00 rows=5000000 width=44)
+  Filter: (estado = 'completado')
+  Rows Removed by Filter: 5000000
+```
+
+<details>
+<summary>Ver solucion</summary>
+
+Se esta usando un **Sequential Scan**. Para una tabla con 10 millones de filas, esto es ineficiente si solo necesitamos los pedidos completados (5 millones de 10 millones = 50%). Aunque 50% es bastante, un indice podria ayudar si las consultas son frecuentes. La solucion seria:
+
+```sql
+CREATE INDEX idx_pedidos_estado ON pedidos(estado);
+```
+
+Sin embargo, si el 50% de los pedidos son "completado", PostgreSQL podria seguir eligiendo Seq Scan porque tiene que leer la mitad de la tabla de todos modos. Un indice brilla mas cuando el filtro es mas selectivo (por ejemplo, estado = 'cancelado' si solo hay un 2%).
+</details>
+
+**Ejercicio 2**: Esta consulta es lenta. Identifica los problemas y reescribela de forma optimizada:
+
+```sql
+SELECT *
+FROM clientes
+WHERE LOWER(email) LIKE '%gmail.com'
+ORDER BY fecha_registro;
+```
+
+<details>
+<summary>Ver solucion</summary>
+
+Problemas:
+1. `SELECT *` trae columnas innecesarias.
+2. `LOWER(email)` impide usar un indice en email.
+3. `LIKE '%gmail.com'` con comodin al inicio no puede usar indice.
+4. `ORDER BY fecha_registro` sin indice requiere ordenar toda la tabla.
+
+Solucion:
+
+```sql
+-- Crear indice para el ordenamiento
+CREATE INDEX idx_clientes_fecha ON clientes(fecha_registro);
+
+-- Seleccionar solo lo necesario
+-- El LIKE con % al inicio es dificil de optimizar con indices normales.
+-- Opciones: usar pg_trgm extension o reestructurar la consulta
+SELECT nombre, email, fecha_registro
+FROM clientes
+WHERE email LIKE '%@gmail.com'
+ORDER BY fecha_registro;
+```
+
+Para optimizar el LIKE con `%` al inicio, se puede usar la extension `pg_trgm`:
+```sql
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX idx_clientes_email_trgm ON clientes USING gin (email gin_trgm_ops);
+```
+</details>
+
+**Ejercicio 3**: Crea los indices necesarios para optimizar esta consulta:
+
+```sql
+SELECT c.nombre, COUNT(p.id) AS total_pedidos, AVG(p.total) AS promedio
+FROM clientes c
+JOIN pedidos p ON c.id = p.cliente_id
+WHERE c.ciudad = 'Barcelona'
+  AND p.fecha >= '2024-01-01'
+GROUP BY c.nombre
+ORDER BY promedio DESC
+LIMIT 10;
+```
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+-- Indice para filtrar clientes por ciudad
+CREATE INDEX idx_clientes_ciudad ON clientes(ciudad);
+
+-- Indice compuesto para pedidos: filtra por fecha y une por cliente_id
+CREATE INDEX idx_pedidos_fecha_cliente ON pedidos(fecha, cliente_id);
+
+-- Alternativamente, si cliente_id es mas selectivo:
+CREATE INDEX idx_pedidos_cliente_fecha ON pedidos(cliente_id, fecha);
+```
+
+El orden del indice compuesto depende de cual columna es mas selectiva. Si hay pocos clientes de Barcelona (digamos 20), entonces `idx_pedidos_cliente_fecha` es mejor porque para cada cliente el Nested Loop buscara directamente por `cliente_id` y luego filtrara por `fecha`.
+</details>
+
+**Ejercicio 4**: Explica por que esta consulta no usa el indice en `fecha_creacion` de la tabla productos:
+
+```sql
+CREATE INDEX idx_prod_fecha ON productos(fecha_creacion);
+
+SELECT * FROM productos WHERE fecha_creacion + INTERVAL '30 days' > NOW();
+```
+
+<details>
+<summary>Ver solucion</summary>
+
+La operacion `fecha_creacion + INTERVAL '30 days'` aplica una funcion/operacion a la columna indexada. PostgreSQL no puede usar el indice porque la expresion transforma el valor antes de comparar.
+
+La solucion es mover la operacion al otro lado:
+
+```sql
+SELECT * FROM productos WHERE fecha_creacion > NOW() - INTERVAL '30 days';
+```
+
+Ahora `fecha_creacion` esta "limpia" en el WHERE y PostgreSQL puede usar el indice para buscar directamente los valores mayores a la fecha calculada.
+</details>
+
+**Ejercicio 5**: Analiza el siguiente plan de ejecucion y sugiere como mejorarlo:
+
+```
+Hash Join  (cost=400.00..2500.00 rows=50000 actual time=50.000..800.000)
+  Hash Cond: (dp.producto_id = pr.id)
+  ->  Seq Scan on detalle_pedidos dp  (cost=0.00..1500.00 rows=100000 actual time=0.020..200.000)
+  ->  Hash  (cost=200.00..200.00 rows=10000 actual time=45.000..45.000)
+        ->  Seq Scan on productos pr  (cost=0.00..200.00 rows=10000 actual time=0.010..30.000)
+Planning Time: 0.500 ms
+Execution Time: 850.000 ms
+```
+
+<details>
+<summary>Ver solucion</summary>
+
+El plan muestra un Hash Join entre `detalle_pedidos` (100,000 filas) y `productos` (10,000 filas). Ambas tablas usan Seq Scan, y el tiempo total es de 850 ms.
+
+Mejoras:
+1. Crear un indice en `detalle_pedidos.producto_id` para evitar el Seq Scan:
+```sql
+CREATE INDEX idx_detalle_producto ON detalle_pedidos(producto_id);
+```
+
+2. Si la consulta original filtra por algun criterio adicional (como una fecha o categoria), agregar ese filtro y un indice compuesto.
+
+3. Si no necesitas todas las columnas de ambas tablas, selecciona solo las necesarias para reducir el volumen de datos.
+
+Con el indice, PostgreSQL podria cambiar a un Nested Loop con Index Scan en detalle_pedidos, o al menos usar un Bitmap Scan, lo que reduciria significativamente el tiempo.
+</details>
+
+**Ejercicio 6**: Tienes una tabla `pedidos` con 5 millones de filas. Esta consulta tarda 15 segundos:
+
+```sql
+SELECT estado, COUNT(*), AVG(total)
+FROM pedidos
+WHERE fecha BETWEEN '2024-01-01' AND '2024-12-31'
+GROUP BY estado
+ORDER BY COUNT(*) DESC;
+```
+
+Que harias para optimizarla? Piensa en indices, y si un Index Only Scan seria posible.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+-- Indice compuesto que cubre las columnas del WHERE, GROUP BY y SELECT
+CREATE INDEX idx_pedidos_fecha_estado_total ON pedidos(fecha, estado, total);
+```
+
+Este indice permite:
+1. Filtrar por `fecha` eficientemente (primera columna del indice).
+2. Agrupar por `estado` sin ordenacion adicional.
+3. Calcular `AVG(total)` directamente desde el indice (Index Only Scan).
+
+```sql
+EXPLAIN ANALYZE SELECT estado, COUNT(*), AVG(total)
+FROM pedidos
+WHERE fecha BETWEEN '2024-01-01' AND '2024-12-31'
+GROUP BY estado
+ORDER BY COUNT(*) DESC;
+```
+
+Resultado esperado: Index Only Scan seguido de un GroupAggregate, reduciendo el tiempo de 15 segundos a menos de 1 segundo.
+
+Alternativamente, con la clausula INCLUDE:
+```sql
+CREATE INDEX idx_pedidos_optimizado ON pedidos(fecha, estado) INCLUDE (total);
+```
+</details>

@@ -1,0 +1,504 @@
+import Callout from "../components/Callout.astro"
+import CommandTable from "../components/CommandTable.astro"
+
+SQL no es solo para filtrar y unir tablas. Tambien tiene un monton de **funciones incorporadas** que te permiten transformar texto, trabajar con fechas, hacer calculos matematicos y manejar casos especiales. En este modulo vamos a explorar las funciones y expresiones mas utiles de PostgreSQL.
+
+---
+
+### Funciones de texto (strings)
+
+PostgreSQL tiene un arsenal completo de funciones para manipular texto. Estas son las mas usadas:
+
+<CommandTable commands={[
+  { command: "UPPER(texto)", description: "Convierte a mayusculas" },
+  { command: "LOWER(texto)", description: "Convierte a minusculas" },
+  { command: "TRIM(texto)", description: "Elimina espacios al inicio y final" },
+  { command: "LENGTH(texto)", description: "Devuelve la cantidad de caracteres" },
+  { command: "SUBSTRING(texto, inicio, largo)", description: "Extrae una porcion del texto" },
+  { command: "CONCAT(a, b, ...)", description: "Concatena textos (ignora NULLs)" },
+  { command: "a || b", description: "Concatena textos (NULL si alguno es NULL)" },
+  { command: "REPLACE(texto, buscar, reemplazo)", description: "Reemplaza ocurrencias" },
+  { command: "LEFT(texto, n)", description: "Primeros n caracteres" },
+  { command: "RIGHT(texto, n)", description: "Ultimos n caracteres" },
+  { command: "POSITION(buscar IN texto)", description: "Posicion de un subtexto" },
+]} />
+
+Veamos ejemplos con nuestra base de datos:
+
+```sql
+-- Nombre del cliente en mayusculas
+SELECT UPPER(nombre) AS nombre_mayusculas FROM clientes;
+
+-- Email en minusculas (por si acaso)
+SELECT LOWER(email) AS email_normalizado FROM clientes;
+
+-- Largo del nombre de cada producto
+SELECT nombre, LENGTH(nombre) AS caracteres FROM productos;
+
+-- Primeras 3 letras de la ciudad
+SELECT nombre, LEFT(ciudad, 3) AS codigo_ciudad FROM clientes;
+
+-- Concatenar nombre y ciudad
+SELECT CONCAT(nombre, ' - ', ciudad) AS cliente_info FROM clientes;
+
+-- Lo mismo con el operador ||
+SELECT nombre || ' (' || ciudad || ')' AS cliente_info FROM clientes;
+```
+
+<Callout type="warning" title="Diferencia entre CONCAT y ||">
+`CONCAT` ignora valores `NULL` (los trata como texto vacio), mientras que `||` devuelve `NULL` si cualquiera de los operandos es `NULL`. Usa `CONCAT` cuando pueda haber NULLs.
+
+```sql
+SELECT CONCAT('Hola', NULL, ' mundo');  -- Resultado: 'Hola mundo'
+SELECT 'Hola' || NULL || ' mundo';      -- Resultado: NULL
+```
+</Callout>
+
+Un ejemplo mas practico con `SUBSTRING` y `REPLACE`:
+
+```sql
+-- Extraer el dominio del email
+SELECT
+    nombre,
+    email,
+    SUBSTRING(email FROM POSITION('@' IN email) + 1) AS dominio
+FROM clientes;
+
+-- Reemplazar texto en nombres de productos
+SELECT REPLACE(nombre, 'Premium', 'Pro') AS nombre_nuevo
+FROM productos
+WHERE nombre LIKE '%Premium%';
+```
+
+---
+
+### Funciones de fecha y hora
+
+Trabajar con fechas es algo que vas a hacer constantemente. PostgreSQL tiene funciones excelentes para esto.
+
+<CommandTable commands={[
+  { command: "NOW()", description: "Fecha y hora actual (con timezone)" },
+  { command: "CURRENT_DATE", description: "Solo la fecha de hoy" },
+  { command: "CURRENT_TIME", description: "Solo la hora actual" },
+  { command: "AGE(fecha)", description: "Diferencia entre hoy y esa fecha" },
+  { command: "AGE(fecha1, fecha2)", description: "Diferencia entre dos fechas" },
+  { command: "EXTRACT(campo FROM fecha)", description: "Extrae una parte (year, month, day, etc.)" },
+  { command: "DATE_TRUNC(precision, fecha)", description: "Trunca a una precision (month, year, etc.)" },
+  { command: "fecha + INTERVAL '...'", description: "Suma un intervalo a una fecha" },
+]} />
+
+Vamos a ver esto en accion:
+
+```sql
+-- Fecha y hora actual
+SELECT NOW();                    -- 2026-03-28 14:30:00.123456-03
+SELECT CURRENT_DATE;             -- 2026-03-28
+SELECT CURRENT_TIME;             -- 14:30:00.123456-03
+
+-- Hace cuanto se registro cada cliente?
+SELECT nombre, fecha_registro, AGE(fecha_registro) AS antiguedad
+FROM clientes;
+-- Resultado: '2 years 3 mons 15 days'
+
+-- Extraer partes de una fecha
+SELECT
+    nombre,
+    fecha_registro,
+    EXTRACT(YEAR FROM fecha_registro) AS anio,
+    EXTRACT(MONTH FROM fecha_registro) AS mes,
+    EXTRACT(DOW FROM fecha_registro) AS dia_semana  -- 0=domingo, 6=sabado
+FROM clientes;
+
+-- Ventas por mes usando DATE_TRUNC
+SELECT
+    DATE_TRUNC('month', fecha) AS mes,
+    COUNT(*) AS cantidad_pedidos,
+    SUM(total) AS ventas_totales
+FROM pedidos
+GROUP BY DATE_TRUNC('month', fecha)
+ORDER BY mes;
+```
+
+<Callout type="tip" title="DATE_TRUNC es tu mejor amigo">
+`DATE_TRUNC` es increiblemente util para agrupar por periodos de tiempo. Trunca la fecha a la precision que le indiques:
+
+```sql
+DATE_TRUNC('year', '2026-03-28')   -- 2026-01-01
+DATE_TRUNC('month', '2026-03-28')  -- 2026-03-01
+DATE_TRUNC('week', '2026-03-28')   -- 2026-03-23 (inicio de semana)
+DATE_TRUNC('day', NOW())           -- 2026-03-28 00:00:00
+```
+</Callout>
+
+#### Intervalos
+
+Los intervalos te permiten sumar o restar tiempo de forma muy expresiva:
+
+```sql
+-- Pedidos de los ultimos 30 dias
+SELECT * FROM pedidos
+WHERE fecha >= CURRENT_DATE - INTERVAL '30 days';
+
+-- Pedidos de los ultimos 3 meses
+SELECT * FROM pedidos
+WHERE fecha >= CURRENT_DATE - INTERVAL '3 months';
+
+-- Clientes registrados en el ultimo anio
+SELECT nombre, fecha_registro
+FROM clientes
+WHERE fecha_registro >= CURRENT_DATE - INTERVAL '1 year';
+
+-- Sumar 2 semanas a una fecha
+SELECT fecha, fecha + INTERVAL '2 weeks' AS fecha_entrega
+FROM pedidos;
+```
+
+---
+
+### Funciones matematicas
+
+Para cuando necesitas hacer calculos numericos:
+
+<CommandTable commands={[
+  { command: "ROUND(n, decimales)", description: "Redondea al numero de decimales" },
+  { command: "CEIL(n) / CEILING(n)", description: "Redondea hacia arriba" },
+  { command: "FLOOR(n)", description: "Redondea hacia abajo" },
+  { command: "ABS(n)", description: "Valor absoluto" },
+  { command: "MOD(a, b)", description: "Resto de la division (a % b)" },
+  { command: "POWER(base, exp)", description: "Potencia" },
+  { command: "SQRT(n)", description: "Raiz cuadrada" },
+]} />
+
+```sql
+-- Redondear precios a 2 decimales
+SELECT nombre, ROUND(precio, 2) AS precio_redondeado FROM productos;
+
+-- Precio con IVA (21%) redondeado
+SELECT
+    nombre,
+    precio,
+    ROUND(precio * 1.21, 2) AS precio_con_iva
+FROM productos;
+
+-- Redondear hacia arriba (para calcular cajas necesarias, por ejemplo)
+SELECT nombre, stock, CEIL(stock::numeric / 12) AS cajas_necesarias
+FROM productos;
+
+-- Valor absoluto de la diferencia con el precio promedio
+SELECT
+    nombre,
+    precio,
+    ROUND(ABS(precio - (SELECT AVG(precio) FROM productos)), 2) AS diferencia_abs
+FROM productos;
+```
+
+---
+
+### CASE WHEN: la expresion condicional
+
+`CASE WHEN` es como un `if/else` dentro de SQL. Es una de las expresiones mas utiles que vas a usar.
+
+#### Forma buscada (searched CASE)
+
+```sql
+SELECT
+    nombre,
+    precio,
+    CASE
+        WHEN precio < 20 THEN 'Economico'
+        WHEN precio < 50 THEN 'Medio'
+        WHEN precio < 100 THEN 'Premium'
+        ELSE 'Lujo'
+    END AS rango_precio
+FROM productos
+ORDER BY precio;
+```
+
+Se pueden usar en cualquier parte de la consulta, incluyendo `ORDER BY` y `GROUP BY`:
+
+```sql
+-- Agrupar por rango de precio
+SELECT
+    CASE
+        WHEN precio < 20 THEN 'Economico'
+        WHEN precio < 50 THEN 'Medio'
+        WHEN precio < 100 THEN 'Premium'
+        ELSE 'Lujo'
+    END AS rango,
+    COUNT(*) AS cantidad,
+    ROUND(AVG(precio), 2) AS precio_promedio
+FROM productos
+GROUP BY rango
+ORDER BY precio_promedio;
+```
+
+#### Forma simple (simple CASE)
+
+Cuando comparas contra un solo campo con valores exactos:
+
+```sql
+SELECT
+    id,
+    total,
+    CASE estado
+        WHEN 'pendiente'  THEN 'En espera'
+        WHEN 'enviado'    THEN 'En camino'
+        WHEN 'completado' THEN 'Finalizado'
+        ELSE 'Desconocido'
+    END AS estado_legible
+FROM pedidos;
+```
+
+#### CASE WHEN para pivotear datos
+
+Un truco muy util es usar `CASE` con funciones de agregacion para crear reportes tipo tabla cruzada:
+
+```sql
+SELECT
+    categoria,
+    COUNT(*) AS total_productos,
+    SUM(CASE WHEN stock > 50 THEN 1 ELSE 0 END) AS con_buen_stock,
+    SUM(CASE WHEN stock BETWEEN 10 AND 50 THEN 1 ELSE 0 END) AS stock_medio,
+    SUM(CASE WHEN stock < 10 THEN 1 ELSE 0 END) AS stock_bajo
+FROM productos
+GROUP BY categoria;
+```
+
+---
+
+### COALESCE: manejo de NULLs
+
+`COALESCE` devuelve el primer valor que **no sea NULL** de una lista de argumentos. Es la funcion estrella para manejar valores nulos.
+
+```sql
+-- Si la ciudad es NULL, mostrar 'Sin ciudad'
+SELECT nombre, COALESCE(ciudad, 'Sin ciudad') AS ciudad
+FROM clientes;
+
+-- Encadenar varios valores de respaldo
+SELECT COALESCE(telefono, email, 'Sin contacto') AS contacto
+FROM clientes;
+```
+
+Un uso muy comun es en calculos donde podria haber NULLs:
+
+```sql
+-- Asegurar que el total nunca sea NULL
+SELECT
+    c.nombre,
+    COALESCE(SUM(p.total), 0) AS total_compras
+FROM clientes c
+LEFT JOIN pedidos p ON c.id = p.cliente_id
+GROUP BY c.nombre;
+```
+
+<Callout type="info">
+Sin `COALESCE`, los clientes sin pedidos mostrarian `NULL` en total_compras. Con `COALESCE(..., 0)`, muestran `0`, que es mucho mas claro.
+</Callout>
+
+---
+
+### NULLIF
+
+`NULLIF(a, b)` devuelve `NULL` si `a` es igual a `b`. De lo contrario, devuelve `a`. Es el opuesto logico de `COALESCE`.
+
+El uso mas comun es evitar divisiones por cero:
+
+```sql
+-- Sin NULLIF: si total_vendido es 0, esto da error
+SELECT nombre, ingresos / total_vendido AS precio_promedio
+FROM resumen_ventas;
+
+-- Con NULLIF: si total_vendido es 0, devuelve NULL en lugar de error
+SELECT nombre, ingresos / NULLIF(total_vendido, 0) AS precio_promedio
+FROM resumen_ventas;
+```
+
+Ejemplo con nuestra base de datos:
+
+```sql
+-- Ratio de pedidos completados vs totales (evitando division por cero)
+SELECT
+    c.nombre,
+    COUNT(p.id) AS total_pedidos,
+    COUNT(CASE WHEN p.estado = 'completado' THEN 1 END) AS completados,
+    ROUND(
+        COUNT(CASE WHEN p.estado = 'completado' THEN 1 END)::numeric /
+        NULLIF(COUNT(p.id), 0) * 100, 1
+    ) AS porcentaje_completado
+FROM clientes c
+LEFT JOIN pedidos p ON c.id = p.cliente_id
+GROUP BY c.nombre;
+```
+
+---
+
+### CAST y :: para conversion de tipos
+
+A veces necesitas convertir un valor de un tipo a otro. PostgreSQL ofrece dos sintaxis:
+
+```sql
+-- Sintaxis estandar SQL
+SELECT CAST('42' AS INTEGER);
+SELECT CAST(precio AS INTEGER) FROM productos;
+
+-- Sintaxis de PostgreSQL (mas corta, mas comun)
+SELECT '42'::INTEGER;
+SELECT precio::INTEGER FROM productos;
+```
+
+Conversiones comunes:
+
+```sql
+-- Texto a numero
+SELECT '123.45'::NUMERIC;
+SELECT '42'::INTEGER;
+
+-- Numero a texto
+SELECT 42::TEXT;
+SELECT precio::TEXT FROM productos;
+
+-- Texto a fecha
+SELECT '2026-03-28'::DATE;
+
+-- Division entera vs decimal
+SELECT 7 / 2;            -- Resultado: 3 (division entera!)
+SELECT 7::NUMERIC / 2;   -- Resultado: 3.5 (division decimal)
+
+-- Porcentajes correctos
+SELECT
+    categoria,
+    COUNT(*) AS cantidad,
+    ROUND(COUNT(*)::NUMERIC / (SELECT COUNT(*) FROM productos) * 100, 1) AS porcentaje
+FROM productos
+GROUP BY categoria;
+```
+
+<Callout type="warning" title="La trampa de la division entera">
+En PostgreSQL, dividir dos enteros da un entero: `5 / 2 = 2`, no `2.5`. Si necesitas decimales, convierte al menos uno de los operandos: `5::NUMERIC / 2 = 2.5`.
+</Callout>
+
+---
+
+### Rendimiento: funciones en WHERE
+
+<Callout type="performance" title="Funciones que matan tus indices">
+Cuando aplicas una funcion a una columna en el `WHERE`, PostgreSQL **no puede usar el indice** de esa columna. Esto se llama un predicado "no sargable".
+
+```sql
+-- MAL: no usa el indice en 'nombre' (escaneo completo de tabla)
+SELECT * FROM clientes WHERE UPPER(nombre) = 'MARIA GARCIA';
+
+-- BIEN: usa ILIKE que puede aprovechar indices con pg_trgm
+SELECT * FROM clientes WHERE nombre ILIKE 'maria garcia';
+
+-- MAL: no usa el indice en 'fecha_registro'
+SELECT * FROM clientes WHERE EXTRACT(YEAR FROM fecha_registro) = 2025;
+
+-- BIEN: usa un rango (puede usar el indice)
+SELECT * FROM clientes
+WHERE fecha_registro >= '2025-01-01'
+  AND fecha_registro < '2026-01-01';
+
+-- MAL: funcion sobre la columna
+SELECT * FROM productos WHERE ROUND(precio, 0) = 50;
+
+-- BIEN: rango equivalente
+SELECT * FROM productos WHERE precio >= 49.5 AND precio < 50.5;
+```
+
+La regla general: **mantene las columnas indexadas "limpias"** en el WHERE. Aplica funciones al otro lado de la comparacion, o reestructura la condicion para no necesitarlas.
+</Callout>
+
+---
+
+### Ejercicios
+
+**Ejercicio 1:** Muestra los productos con su nombre en mayusculas, el largo del nombre, y el precio redondeado sin decimales.
+
+```sql
+SELECT
+    UPPER(nombre) AS nombre_mayusculas,
+    LENGTH(nombre) AS largo_nombre,
+    ROUND(precio, 0) AS precio_redondeado
+FROM productos;
+```
+
+**Ejercicio 2:** Calcula cuantos dias hace que se registro cada cliente y muestra solo los que tienen mas de 365 dias.
+
+```sql
+SELECT
+    nombre,
+    fecha_registro,
+    CURRENT_DATE - fecha_registro AS dias_registrado
+FROM clientes
+WHERE CURRENT_DATE - fecha_registro > 365
+ORDER BY dias_registrado DESC;
+```
+
+**Ejercicio 3:** Crea un reporte de pedidos por mes y anio, mostrando la cantidad y el total. Usa `DATE_TRUNC` o `EXTRACT`.
+
+```sql
+SELECT
+    EXTRACT(YEAR FROM fecha) AS anio,
+    EXTRACT(MONTH FROM fecha) AS mes,
+    COUNT(*) AS cantidad_pedidos,
+    ROUND(SUM(total), 2) AS total_ventas
+FROM pedidos
+GROUP BY anio, mes
+ORDER BY anio, mes;
+```
+
+**Ejercicio 4:** Clasifica a los empleados en rangos salariales usando `CASE WHEN`: "Junior" (menos de 40000), "Semi-Senior" (40000-70000), "Senior" (mas de 70000). Muestra cuantos hay en cada rango.
+
+```sql
+SELECT
+    CASE
+        WHEN salario < 40000 THEN 'Junior'
+        WHEN salario <= 70000 THEN 'Semi-Senior'
+        ELSE 'Senior'
+    END AS rango,
+    COUNT(*) AS cantidad,
+    ROUND(AVG(salario), 2) AS salario_promedio
+FROM empleados
+GROUP BY rango
+ORDER BY salario_promedio;
+```
+
+**Ejercicio 5:** Muestra cada cliente con su total de compras. Si nunca compro nada, debe aparecer `0` (no NULL). Usa `COALESCE`.
+
+```sql
+SELECT
+    c.nombre,
+    c.ciudad,
+    COALESCE(SUM(p.total), 0) AS total_compras
+FROM clientes c
+LEFT JOIN pedidos p ON c.id = p.cliente_id
+GROUP BY c.nombre, c.ciudad
+ORDER BY total_compras DESC;
+```
+
+**Ejercicio 6:** Genera un reporte que muestre para cada categoria: nombre, cantidad de productos, precio promedio, y el producto mas caro y mas barato (concatenados como texto). Usa varias de las funciones que aprendimos.
+
+```sql
+WITH stats AS (
+    SELECT
+        categoria,
+        COUNT(*) AS cantidad,
+        ROUND(AVG(precio), 2) AS precio_promedio,
+        MIN(precio) AS min_precio,
+        MAX(precio) AS max_precio
+    FROM productos
+    GROUP BY categoria
+)
+SELECT
+    UPPER(s.categoria) AS categoria,
+    s.cantidad,
+    s.precio_promedio,
+    CONCAT(
+        'Mas barato: $', s.min_precio::TEXT,
+        ' | Mas caro: $', s.max_precio::TEXT
+    ) AS rango_precios
+FROM stats s
+ORDER BY s.precio_promedio DESC;
+```

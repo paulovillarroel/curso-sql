@@ -1,0 +1,454 @@
+import Callout from "../components/Callout.astro"
+
+Hasta ahora hemos trabajado con filas individuales: seleccionar, filtrar, ordenar. Pero muchas veces necesitas **resumenes**: cuantos productos hay, cual es el precio promedio, cuanto se vendio en total. Para eso existen las **funciones de agregacion**.
+
+---
+
+## Las funciones basicas de agregacion
+
+### COUNT: Contar filas
+
+`COUNT` cuenta el numero de filas. Tiene varias formas:
+
+```sql
+-- Contar TODAS las filas de la tabla
+SELECT COUNT(*) FROM productos;
+
+-- Contar filas donde la columna NO es NULL
+SELECT COUNT(email) FROM clientes;
+
+-- Contar valores DISTINTOS
+SELECT COUNT(DISTINCT categoria) FROM productos;
+```
+
+<Callout type="info" title="COUNT(*) vs COUNT(columna)">
+  `COUNT(*)` cuenta **todas** las filas, incluyendo las que tienen NULLs. `COUNT(columna)` solo cuenta filas donde esa columna **no es NULL**. `COUNT(DISTINCT columna)` cuenta valores unicos (sin repetir).
+</Callout>
+
+Veamos ejemplos mas concretos:
+
+```sql
+-- Cuantos clientes tenemos?
+SELECT COUNT(*) AS total_clientes FROM clientes;
+
+-- Cuantas ciudades distintas tienen nuestros clientes?
+SELECT COUNT(DISTINCT ciudad) AS ciudades FROM clientes;
+
+-- Cuantos pedidos estan pendientes?
+SELECT COUNT(*) AS pendientes
+FROM pedidos
+WHERE estado = 'pendiente';
+```
+
+### SUM: Sumar valores
+
+`SUM` suma todos los valores de una columna numerica.
+
+```sql
+-- Total de ingresos por pedidos completados
+SELECT SUM(total) AS ingresos_totales
+FROM pedidos
+WHERE estado = 'completado';
+
+-- Stock total de todos los productos
+SELECT SUM(stock) AS stock_total FROM productos;
+```
+
+### AVG: Promedio
+
+`AVG` calcula el promedio (la media aritmetica).
+
+```sql
+-- Precio promedio de los productos
+SELECT AVG(precio) AS precio_promedio FROM productos;
+
+-- Salario promedio de los empleados
+SELECT AVG(salario) AS salario_promedio FROM empleados;
+
+-- Promedio del total de los pedidos
+SELECT AVG(total) AS pedido_promedio FROM pedidos;
+```
+
+<Callout type="tip" title="Redondear el resultado">
+  `AVG` suele devolver muchos decimales. Puedes usar `ROUND` para limitar: `ROUND(AVG(precio), 2)` te da 2 decimales.
+</Callout>
+
+### MIN y MAX: Extremos
+
+```sql
+-- Producto mas barato y mas caro
+SELECT
+  MIN(precio) AS precio_minimo,
+  MAX(precio) AS precio_maximo
+FROM productos;
+
+-- Primer y ultimo registro de clientes
+SELECT
+  MIN(fecha_registro) AS primer_cliente,
+  MAX(fecha_registro) AS ultimo_cliente
+FROM clientes;
+
+-- El pedido mas grande
+SELECT MAX(total) AS pedido_mas_grande FROM pedidos;
+```
+
+### Combinando varias funciones
+
+Puedes usar varias funciones de agregacion en el mismo SELECT:
+
+```sql
+SELECT
+  COUNT(*) AS total_productos,
+  ROUND(AVG(precio), 2) AS precio_promedio,
+  MIN(precio) AS mas_barato,
+  MAX(precio) AS mas_caro,
+  SUM(stock) AS stock_total
+FROM productos;
+```
+
+Esto te da un resumen completo de tu tabla de productos en una sola consulta.
+
+---
+
+## GROUP BY: Agrupando filas
+
+Las funciones de agregacion se vuelven realmente poderosas cuando las combinas con `GROUP BY`. En vez de un solo resumen para toda la tabla, obtienes **un resumen por grupo**.
+
+```sql
+-- Cuantos productos hay en cada categoria?
+SELECT categoria, COUNT(*) AS cantidad
+FROM productos
+GROUP BY categoria;
+```
+
+El resultado seria algo como:
+
+| categoria   | cantidad |
+|-------------|----------|
+| Electronica | 6        |
+| Accesorios  | 5        |
+| Muebles     | 4        |
+
+Mas ejemplos:
+
+```sql
+-- Precio promedio por categoria
+SELECT
+  categoria,
+  ROUND(AVG(precio), 2) AS precio_promedio,
+  COUNT(*) AS cantidad
+FROM productos
+GROUP BY categoria;
+
+-- Total de ventas por estado del pedido
+SELECT
+  estado,
+  COUNT(*) AS cantidad_pedidos,
+  SUM(total) AS suma_totales,
+  ROUND(AVG(total), 2) AS promedio_total
+FROM pedidos
+GROUP BY estado;
+
+-- Cuantos clientes por ciudad?
+SELECT ciudad, COUNT(*) AS total_clientes
+FROM clientes
+GROUP BY ciudad
+ORDER BY total_clientes DESC;
+```
+
+<Callout type="warning" title="Regla importante de GROUP BY">
+  Cuando usas `GROUP BY`, **todas las columnas** en el `SELECT` deben ser: (a) columnas por las que agrupas, o (b) funciones de agregacion. No puedes poner una columna suelta que no este en el GROUP BY ni dentro de una funcion de agregacion.
+</Callout>
+
+Esto es un **error comun**:
+
+```sql
+-- ERROR: "nombre" no esta en GROUP BY ni es una funcion de agregacion
+SELECT nombre, categoria, COUNT(*)
+FROM productos
+GROUP BY categoria;
+```
+
+PostgreSQL te va a dar un error porque `nombre` no sabe cual devolver: hay muchos nombres por categoria. Tienes que elegir: o lo agregas al `GROUP BY`, o usas una funcion de agregacion como `MIN(nombre)`, `MAX(nombre)`, etc.
+
+---
+
+## GROUP BY con multiples columnas
+
+Puedes agrupar por mas de una columna. Esto crea grupos mas granulares:
+
+```sql
+-- Cuantos pedidos por estado Y por mes
+SELECT
+  estado,
+  EXTRACT(MONTH FROM fecha) AS mes,
+  COUNT(*) AS cantidad,
+  SUM(total) AS total_ventas
+FROM pedidos
+GROUP BY estado, EXTRACT(MONTH FROM fecha)
+ORDER BY mes, estado;
+```
+
+```sql
+-- Salario promedio por departamento
+SELECT
+  departamento,
+  COUNT(*) AS empleados,
+  ROUND(AVG(salario), 2) AS salario_promedio,
+  MIN(salario) AS salario_minimo,
+  MAX(salario) AS salario_maximo
+FROM empleados
+GROUP BY departamento
+ORDER BY salario_promedio DESC;
+```
+
+---
+
+## HAVING: Filtrar grupos
+
+Ya conoces `WHERE` para filtrar filas individuales. Pero `WHERE` se ejecuta **antes** de agrupar, asi que no puedes usarlo para filtrar basandote en el resultado de una funcion de agregacion.
+
+Para eso existe `HAVING`: filtra **grupos** despues de la agregacion.
+
+```sql
+-- Categorias que tienen mas de 5 productos
+SELECT categoria, COUNT(*) AS cantidad
+FROM productos
+GROUP BY categoria
+HAVING COUNT(*) > 5;
+```
+
+```sql
+-- Ciudades con al menos 3 clientes
+SELECT ciudad, COUNT(*) AS total_clientes
+FROM clientes
+GROUP BY ciudad
+HAVING COUNT(*) >= 3
+ORDER BY total_clientes DESC;
+```
+
+```sql
+-- Clientes que han gastado mas de 1000 en total
+SELECT
+  cliente_id,
+  COUNT(*) AS num_pedidos,
+  SUM(total) AS gasto_total
+FROM pedidos
+GROUP BY cliente_id
+HAVING SUM(total) > 1000
+ORDER BY gasto_total DESC;
+```
+
+### WHERE vs HAVING
+
+Esta es una duda muy comun. La diferencia es **cuando** se aplica cada filtro:
+
+```sql
+-- WHERE filtra filas ANTES de agrupar
+-- HAVING filtra grupos DESPUES de agrupar
+SELECT categoria, AVG(precio) AS precio_promedio
+FROM productos
+WHERE stock > 0              -- solo productos con stock
+GROUP BY categoria
+HAVING AVG(precio) > 50      -- solo categorias con promedio > 50
+ORDER BY precio_promedio DESC;
+```
+
+<Callout type="tip" title="WHERE vs HAVING en resumen">
+  - **WHERE**: Filtra filas individuales ANTES del GROUP BY. No puede usar funciones de agregacion.
+  - **HAVING**: Filtra grupos DESPUES del GROUP BY. SI puede usar funciones de agregacion.
+  - Usa WHERE siempre que puedas: es mas eficiente porque reduce filas antes de agrupar.
+</Callout>
+
+---
+
+## El orden de ejecucion de una consulta SQL
+
+Este es un concepto clave que te va a ayudar a entender por que las cosas funcionan como funcionan. SQL **no** se ejecuta en el orden en que lo escribes. El orden real es:
+
+```sql
+-- Asi lo ESCRIBES:
+SELECT categoria, COUNT(*) AS cantidad    -- 5
+FROM productos                            -- 1
+WHERE precio > 10                         -- 2
+GROUP BY categoria                        -- 3
+HAVING COUNT(*) > 2                       -- 4
+ORDER BY cantidad DESC                    -- 6
+LIMIT 5;                                  -- 7
+```
+
+El orden de ejecucion es:
+
+1. **FROM** - Determina de que tabla leer
+2. **WHERE** - Filtra filas individuales
+3. **GROUP BY** - Agrupa las filas que pasaron el WHERE
+4. **HAVING** - Filtra los grupos
+5. **SELECT** - Elige que columnas/expresiones mostrar
+6. **ORDER BY** - Ordena los resultados
+7. **LIMIT** - Corta los resultados
+
+<Callout type="info" title="Por que importa este orden?">
+  Esto explica por que no puedes usar un alias del SELECT en el WHERE (el SELECT se ejecuta despues), pero SI puedes usarlo en el ORDER BY (se ejecuta despues del SELECT). Tambien explica por que HAVING puede usar funciones de agregacion pero WHERE no.
+</Callout>
+
+---
+
+## Rendimiento y complejidad
+
+<Callout type="performance" title="Costo de las funciones de agregacion">
+  Las funciones de agregacion como `COUNT`, `SUM`, `AVG` deben **recorrer todas las filas** que coinciden con el filtro. Esto es **O(n)** donde `n` es el numero de filas. No hay forma de evitarlo: para sumar, hay que ver cada valor.
+</Callout>
+
+### GROUP BY y el costo de agrupar
+
+`GROUP BY` necesita organizar las filas en grupos. PostgreSQL tiene dos estrategias principales:
+
+```sql
+-- Si hay pocos grupos distintos, PostgreSQL puede usar
+-- una tabla hash en memoria: O(n)
+SELECT categoria, COUNT(*)
+FROM productos
+GROUP BY categoria;
+
+-- Si hay muchos grupos o poca memoria, puede necesitar
+-- ordenar las filas primero: O(n log n)
+SELECT fecha, COUNT(*)
+FROM pedidos
+GROUP BY fecha;
+```
+
+<Callout type="performance" title="Agrupar es O(n) o O(n log n)">
+  GROUP BY usa hashing (O(n), mas rapido) o sorting (O(n log n)). PostgreSQL elige la estrategia automaticamente. En general, mientras menos grupos distintos haya, mas eficiente es la operacion.
+</Callout>
+
+### Tip: filtra con WHERE antes de agrupar
+
+Siempre que puedas, reduce las filas con `WHERE` **antes** del `GROUP BY`. Esto es mucho mas eficiente que agrupar todo y luego filtrar con `HAVING`:
+
+```sql
+-- MEJOR: filtra primero, luego agrupa
+SELECT categoria, AVG(precio)
+FROM productos
+WHERE stock > 0          -- reduce filas ANTES de agrupar
+GROUP BY categoria;
+
+-- PEOR (si lo que filtras NO depende del grupo):
+-- no filtres con HAVING lo que puedes filtrar con WHERE
+```
+
+---
+
+## Ejercicios
+
+**Ejercicio 1:** Cuenta cuantos productos hay en total y cuantas categorias distintas existen.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+  COUNT(*) AS total_productos,
+  COUNT(DISTINCT categoria) AS total_categorias
+FROM productos;
+```
+</details>
+
+**Ejercicio 2:** Calcula el precio minimo, maximo y promedio de los productos. Redondea el promedio a 2 decimales.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+  MIN(precio) AS precio_minimo,
+  MAX(precio) AS precio_maximo,
+  ROUND(AVG(precio), 2) AS precio_promedio
+FROM productos;
+```
+</details>
+
+**Ejercicio 3:** Muestra cuantos pedidos hay en cada estado, junto con el total facturado por estado. Ordena por total facturado descendente.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+  estado,
+  COUNT(*) AS cantidad_pedidos,
+  SUM(total) AS total_facturado
+FROM pedidos
+GROUP BY estado
+ORDER BY total_facturado DESC;
+```
+</details>
+
+**Ejercicio 4:** Encuentra las categorias de productos que tienen un precio promedio mayor a 100. Muestra la categoria, el precio promedio (redondeado) y la cantidad de productos.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+  categoria,
+  ROUND(AVG(precio), 2) AS precio_promedio,
+  COUNT(*) AS cantidad
+FROM productos
+GROUP BY categoria
+HAVING AVG(precio) > 100
+ORDER BY precio_promedio DESC;
+```
+</details>
+
+**Ejercicio 5:** Para cada ciudad, muestra cuantos clientes hay, pero solo las ciudades con 2 o mas clientes. Ordena de mayor a menor cantidad.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+  ciudad,
+  COUNT(*) AS total_clientes
+FROM clientes
+GROUP BY ciudad
+HAVING COUNT(*) >= 2
+ORDER BY total_clientes DESC;
+```
+</details>
+
+**Ejercicio 6:** Muestra el departamento, numero de empleados y salario promedio para cada departamento que tenga un salario promedio mayor a 40000.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+  departamento,
+  COUNT(*) AS num_empleados,
+  ROUND(AVG(salario), 2) AS salario_promedio
+FROM empleados
+GROUP BY departamento
+HAVING AVG(salario) > 40000
+ORDER BY salario_promedio DESC;
+```
+</details>
+
+**Ejercicio 7 (Desafio):** Encuentra los 3 clientes que mas pedidos han hecho. Muestra el cliente_id, el numero de pedidos, y el gasto total. Solo incluye pedidos con estado 'completado'.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+  cliente_id,
+  COUNT(*) AS num_pedidos,
+  SUM(total) AS gasto_total
+FROM pedidos
+WHERE estado = 'completado'
+GROUP BY cliente_id
+ORDER BY num_pedidos DESC
+LIMIT 3;
+```
+
+Nota que usamos `WHERE` para filtrar por estado (es una condicion sobre filas individuales, no sobre grupos), y `ORDER BY` + `LIMIT` para quedarnos con los top 3.
+</details>

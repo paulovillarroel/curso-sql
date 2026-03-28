@@ -1,0 +1,639 @@
+import Callout from "../components/Callout.astro"
+
+Estos ejercicios combinan todo lo que has aprendido a lo largo del curso. Estan organizados por nivel de dificultad para que vayas progresando. Intenta resolver cada uno por tu cuenta antes de mirar la solucion.
+
+<Callout type="warning" title="Prerequisito: base de datos de practica">
+Todos los ejercicios se ejecutan sobre la base de datos `tienda` creada en el **Modulo 2**. Si aun no la tienes configurada, ve al Modulo 2 y sigue los pasos para crear las tablas (`productos`, `clientes`, `pedidos`, `detalle_pedidos`, `empleados`) y cargar los datos de ejemplo. Si no recuerdas la estructura de las tablas, revisa el cheatsheet al final del curso.
+</Callout>
+
+---
+
+## Basico
+
+### Ejercicio 1: Clientes sin pedidos
+
+Encuentra todos los clientes que **nunca** han realizado un pedido. Muestra su nombre y email.
+
+<details>
+<summary>Pista</summary>
+Piensa en un LEFT JOIN donde la tabla derecha no tiene coincidencia, o usa NOT EXISTS.
+</details>
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+-- Opcion 1: LEFT JOIN + IS NULL
+SELECT c.nombre, c.email
+FROM clientes c
+LEFT JOIN pedidos p ON c.id = p.cliente_id
+WHERE p.id IS NULL;
+
+-- Opcion 2: NOT EXISTS
+SELECT c.nombre, c.email
+FROM clientes c
+WHERE NOT EXISTS (
+    SELECT 1 FROM pedidos p WHERE p.cliente_id = c.id
+);
+
+-- Opcion 3: NOT IN (menos eficiente con tablas grandes)
+SELECT nombre, email
+FROM clientes
+WHERE id NOT IN (SELECT cliente_id FROM pedidos);
+```
+
+La opcion 2 con NOT EXISTS suele ser la mas eficiente en tablas grandes.
+</details>
+
+---
+
+### Ejercicio 2: Productos por encima del promedio
+
+Lista los productos cuyo precio es mayor al precio promedio de **su misma categoria**. Muestra nombre, categoria, precio y el precio promedio de la categoria.
+
+<details>
+<summary>Pista</summary>
+Necesitas una subconsulta correlacionada o un JOIN con una subconsulta que calcule el promedio por categoria.
+</details>
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT p.nombre, p.categoria, p.precio, cat_avg.promedio
+FROM productos p
+JOIN (
+    SELECT categoria, AVG(precio) AS promedio
+    FROM productos
+    GROUP BY categoria
+) cat_avg ON p.categoria = cat_avg.categoria
+WHERE p.precio > cat_avg.promedio
+ORDER BY p.categoria, p.precio DESC;
+```
+</details>
+
+---
+
+### Ejercicio 3: Resumen mensual de pedidos
+
+Genera un resumen de pedidos por mes del ano 2024. Muestra el mes (como numero), la cantidad de pedidos, el total facturado y el promedio por pedido. Ordena por mes.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+    EXTRACT(MONTH FROM fecha) AS mes,
+    COUNT(*) AS cantidad_pedidos,
+    SUM(total) AS total_facturado,
+    ROUND(AVG(total), 2) AS promedio_por_pedido
+FROM pedidos
+WHERE fecha >= '2024-01-01' AND fecha < '2025-01-01'
+GROUP BY EXTRACT(MONTH FROM fecha)
+ORDER BY mes;
+```
+</details>
+
+---
+
+### Ejercicio 4: Top 5 productos mas vendidos
+
+Encuentra los 5 productos mas vendidos (por cantidad total). Muestra el nombre del producto, la cantidad total vendida y el ingreso total generado.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+    p.nombre,
+    SUM(dp.cantidad) AS total_vendido,
+    SUM(dp.cantidad * dp.precio_unitario) AS ingreso_total
+FROM productos p
+JOIN detalle_pedidos dp ON p.id = dp.producto_id
+GROUP BY p.nombre
+ORDER BY total_vendido DESC
+LIMIT 5;
+```
+</details>
+
+---
+
+### Ejercicio 5: Clientes por ciudad con filtro
+
+Muestra las ciudades que tienen **mas de 3 clientes registrados**, junto con la cantidad de clientes en cada una. Ordena de mayor a menor.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT ciudad, COUNT(*) AS total_clientes
+FROM clientes
+GROUP BY ciudad
+HAVING COUNT(*) > 3
+ORDER BY total_clientes DESC;
+```
+</details>
+
+---
+
+## Intermedio
+
+### Ejercicio 6: Clientes VIP
+
+Un cliente VIP es aquel que ha gastado mas de $5,000 en total O ha realizado mas de 10 pedidos. Lista los clientes VIP con su nombre, cantidad de pedidos, gasto total y la razon por la cual son VIP (puede ser 'gasto alto', 'muchos pedidos' o 'ambos').
+
+<details>
+<summary>Pista</summary>
+Usa un CASE para determinar la razon. Primero haz el JOIN y la agregacion, luego filtra con HAVING.
+</details>
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+    c.nombre,
+    COUNT(p.id) AS total_pedidos,
+    SUM(p.total) AS gasto_total,
+    CASE
+        WHEN SUM(p.total) > 5000 AND COUNT(p.id) > 10 THEN 'ambos'
+        WHEN SUM(p.total) > 5000 THEN 'gasto alto'
+        WHEN COUNT(p.id) > 10 THEN 'muchos pedidos'
+    END AS razon_vip
+FROM clientes c
+JOIN pedidos p ON c.id = p.cliente_id
+GROUP BY c.nombre
+HAVING SUM(p.total) > 5000 OR COUNT(p.id) > 10
+ORDER BY gasto_total DESC;
+```
+</details>
+
+---
+
+### Ejercicio 7: Productos que nunca se han vendido
+
+Encuentra los productos que **no aparecen en ningun detalle de pedido**. Muestra nombre, precio y fecha de creacion. Ordena por fecha de creacion de mas antiguo a mas reciente.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT p.nombre, p.precio, p.fecha_creacion
+FROM productos p
+LEFT JOIN detalle_pedidos dp ON p.id = dp.producto_id
+WHERE dp.id IS NULL
+ORDER BY p.fecha_creacion ASC;
+```
+</details>
+
+---
+
+### Ejercicio 8: Ranking de clientes por ciudad
+
+Para cada ciudad, muestra los 3 clientes que mas han gastado. Incluye el nombre del cliente, la ciudad y el total gastado.
+
+<details>
+<summary>Pista</summary>
+Necesitas funciones de ventana. ROW_NUMBER() o RANK() particionado por ciudad.
+</details>
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+WITH clientes_gasto AS (
+    SELECT
+        c.nombre,
+        c.ciudad,
+        SUM(p.total) AS total_gastado,
+        ROW_NUMBER() OVER (PARTITION BY c.ciudad ORDER BY SUM(p.total) DESC) AS ranking
+    FROM clientes c
+    JOIN pedidos p ON c.id = p.cliente_id
+    GROUP BY c.nombre, c.ciudad
+)
+SELECT nombre, ciudad, total_gastado, ranking
+FROM clientes_gasto
+WHERE ranking <= 3
+ORDER BY ciudad, ranking;
+```
+</details>
+
+---
+
+### Ejercicio 9: Pedidos con muchos productos
+
+Encuentra los pedidos que contienen **mas de 5 productos diferentes**. Muestra el id del pedido, la fecha, el nombre del cliente, la cantidad de productos diferentes y el total del pedido.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+    p.id AS pedido_id,
+    p.fecha,
+    c.nombre AS cliente,
+    COUNT(DISTINCT dp.producto_id) AS productos_diferentes,
+    p.total
+FROM pedidos p
+JOIN clientes c ON p.cliente_id = c.id
+JOIN detalle_pedidos dp ON p.id = dp.pedido_id
+GROUP BY p.id, p.fecha, c.nombre, p.total
+HAVING COUNT(DISTINCT dp.producto_id) > 5
+ORDER BY productos_diferentes DESC;
+```
+</details>
+
+---
+
+### Ejercicio 10: Variacion de ventas mes a mes
+
+Calcula las ventas totales por mes en 2024 y muestra la **diferencia porcentual** respecto al mes anterior. Muestra mes, total del mes, total del mes anterior y el porcentaje de cambio.
+
+<details>
+<summary>Pista</summary>
+Usa LAG() como funcion de ventana para acceder al valor del mes anterior.
+</details>
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+WITH ventas_mensuales AS (
+    SELECT
+        EXTRACT(MONTH FROM fecha)::INTEGER AS mes,
+        SUM(total) AS total_mes
+    FROM pedidos
+    WHERE fecha >= '2024-01-01' AND fecha < '2025-01-01'
+    GROUP BY EXTRACT(MONTH FROM fecha)
+    ORDER BY mes
+)
+SELECT
+    mes,
+    total_mes,
+    LAG(total_mes) OVER (ORDER BY mes) AS mes_anterior,
+    ROUND(
+        (total_mes - LAG(total_mes) OVER (ORDER BY mes))
+        / LAG(total_mes) OVER (ORDER BY mes) * 100,
+        2
+    ) AS variacion_porcentual
+FROM ventas_mensuales;
+```
+</details>
+
+---
+
+### Ejercicio 11: Empleados que ganan mas que su jefe
+
+Usando la tabla `empleados` con la columna `jefe_id` (que referencia a otro empleado), encuentra los empleados que ganan mas que su jefe. Muestra el nombre del empleado, su salario, el nombre del jefe y el salario del jefe.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+    e.nombre AS empleado,
+    e.salario AS salario_empleado,
+    j.nombre AS jefe,
+    j.salario AS salario_jefe
+FROM empleados e
+JOIN empleados j ON e.jefe_id = j.id
+WHERE e.salario > j.salario
+ORDER BY (e.salario - j.salario) DESC;
+```
+</details>
+
+---
+
+## Avanzado
+
+### Ejercicio 12: Analisis de cohortes simplificado
+
+Agrupa a los clientes por el **mes en que hicieron su primer pedido** (cohorte). Para cada cohorte, muestra cuantos clientes tiene y cuanto gastaron en total en su primer mes vs. los meses siguientes.
+
+<details>
+<summary>Pista</summary>
+Primero identifica el primer pedido de cada cliente con MIN(). Luego clasifica los pedidos como "primer mes" o "meses siguientes".
+</details>
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+WITH primer_pedido AS (
+    SELECT
+        cliente_id,
+        DATE_TRUNC('month', MIN(fecha)) AS cohorte
+    FROM pedidos
+    GROUP BY cliente_id
+),
+pedidos_clasificados AS (
+    SELECT
+        pp.cohorte,
+        p.cliente_id,
+        p.total,
+        CASE
+            WHEN DATE_TRUNC('month', p.fecha) = pp.cohorte THEN 'primer_mes'
+            ELSE 'meses_siguientes'
+        END AS periodo
+    FROM pedidos p
+    JOIN primer_pedido pp ON p.cliente_id = pp.cliente_id
+)
+SELECT
+    TO_CHAR(cohorte, 'YYYY-MM') AS cohorte,
+    COUNT(DISTINCT cliente_id) AS total_clientes,
+    SUM(CASE WHEN periodo = 'primer_mes' THEN total ELSE 0 END) AS gasto_primer_mes,
+    SUM(CASE WHEN periodo = 'meses_siguientes' THEN total ELSE 0 END) AS gasto_posterior
+FROM pedidos_clasificados
+GROUP BY cohorte
+ORDER BY cohorte;
+```
+</details>
+
+---
+
+### Ejercicio 13: Productos frecuentemente comprados juntos
+
+Encuentra pares de productos que se compran juntos en el mismo pedido con frecuencia. Muestra los nombres de ambos productos y cuantas veces aparecen en el mismo pedido. Solo muestra pares que aparezcan al menos 3 veces.
+
+<details>
+<summary>Pista</summary>
+Necesitas un self-join de detalle_pedidos consigo misma, unida por pedido_id. Usa una condicion para evitar pares duplicados (producto A con B es lo mismo que B con A).
+</details>
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+    p1.nombre AS producto_1,
+    p2.nombre AS producto_2,
+    COUNT(*) AS veces_juntos
+FROM detalle_pedidos dp1
+JOIN detalle_pedidos dp2 ON dp1.pedido_id = dp2.pedido_id
+    AND dp1.producto_id < dp2.producto_id  -- evita duplicados y auto-pares
+JOIN productos p1 ON dp1.producto_id = p1.id
+JOIN productos p2 ON dp2.producto_id = p2.id
+GROUP BY p1.nombre, p2.nombre
+HAVING COUNT(*) >= 3
+ORDER BY veces_juntos DESC;
+```
+</details>
+
+---
+
+### Ejercicio 14: Detectar pedidos anomalos
+
+Un pedido es "anomalo" si su total es **mas de 3 desviaciones estandar** por encima del promedio de pedidos de ese mismo cliente. Encuentra estos pedidos y muestra el id del pedido, el cliente, el total del pedido, el promedio del cliente y cuantas desviaciones estandar representa.
+
+<details>
+<summary>Pista</summary>
+Calcula promedio y desviacion estandar por cliente con funciones de ventana, luego filtra.
+</details>
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+WITH stats_cliente AS (
+    SELECT
+        p.id AS pedido_id,
+        c.nombre AS cliente,
+        p.total,
+        AVG(p.total) OVER (PARTITION BY p.cliente_id) AS promedio_cliente,
+        STDDEV(p.total) OVER (PARTITION BY p.cliente_id) AS desviacion_cliente
+    FROM pedidos p
+    JOIN clientes c ON p.cliente_id = c.id
+)
+SELECT
+    pedido_id,
+    cliente,
+    total,
+    ROUND(promedio_cliente, 2) AS promedio,
+    ROUND(desviacion_cliente, 2) AS desviacion,
+    ROUND((total - promedio_cliente) / NULLIF(desviacion_cliente, 0), 2) AS desviaciones_sobre_media
+FROM stats_cliente
+WHERE desviacion_cliente > 0
+    AND (total - promedio_cliente) / desviacion_cliente > 3
+ORDER BY desviaciones_sobre_media DESC;
+```
+
+Nota: usamos `NULLIF(desviacion_cliente, 0)` para evitar division por cero en caso de clientes con un solo pedido.
+</details>
+
+---
+
+### Ejercicio 15: Dashboard de resumen completo
+
+Crea una consulta que genere un resumen ejecutivo con **una sola consulta**. Debe devolver una fila con:
+- Total de clientes activos (que han hecho al menos un pedido)
+- Total de ingresos del mes actual
+- Total de ingresos del mes anterior
+- Porcentaje de cambio entre ambos meses
+- El producto mas vendido del mes actual (por cantidad)
+- La ciudad con mas pedidos del mes actual
+
+<details>
+<summary>Pista</summary>
+Usa multiples CTEs, una para cada metrica, y luego cruza los resultados con un CROSS JOIN.
+</details>
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+WITH clientes_activos AS (
+    SELECT COUNT(DISTINCT cliente_id) AS total
+    FROM pedidos
+),
+ingresos_actual AS (
+    SELECT COALESCE(SUM(total), 0) AS total
+    FROM pedidos
+    WHERE DATE_TRUNC('month', fecha) = DATE_TRUNC('month', CURRENT_DATE)
+),
+ingresos_anterior AS (
+    SELECT COALESCE(SUM(total), 0) AS total
+    FROM pedidos
+    WHERE DATE_TRUNC('month', fecha) = DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '1 month'
+),
+producto_top AS (
+    SELECT p.nombre
+    FROM detalle_pedidos dp
+    JOIN productos p ON dp.producto_id = p.id
+    JOIN pedidos pe ON dp.pedido_id = pe.id
+    WHERE DATE_TRUNC('month', pe.fecha) = DATE_TRUNC('month', CURRENT_DATE)
+    GROUP BY p.nombre
+    ORDER BY SUM(dp.cantidad) DESC
+    LIMIT 1
+),
+ciudad_top AS (
+    SELECT c.ciudad
+    FROM pedidos p
+    JOIN clientes c ON p.cliente_id = c.id
+    WHERE DATE_TRUNC('month', p.fecha) = DATE_TRUNC('month', CURRENT_DATE)
+    GROUP BY c.ciudad
+    ORDER BY COUNT(*) DESC
+    LIMIT 1
+)
+SELECT
+    ca.total AS clientes_activos,
+    ia.total AS ingresos_mes_actual,
+    ian.total AS ingresos_mes_anterior,
+    CASE
+        WHEN ian.total = 0 THEN NULL
+        ELSE ROUND((ia.total - ian.total) / ian.total * 100, 2)
+    END AS variacion_porcentual,
+    pt.nombre AS producto_top,
+    ct.ciudad AS ciudad_top
+FROM clientes_activos ca
+CROSS JOIN ingresos_actual ia
+CROSS JOIN ingresos_anterior ian
+CROSS JOIN producto_top pt
+CROSS JOIN ciudad_top ct;
+```
+</details>
+
+---
+
+### Ejercicio 16: Optimiza esta consulta
+
+La siguiente consulta es funcional pero lenta. Reescribela para que sea mas eficiente y sugiere los indices necesarios:
+
+```sql
+SELECT *
+FROM clientes c
+WHERE (SELECT SUM(p.total)
+       FROM pedidos p
+       WHERE p.cliente_id = c.id
+       AND EXTRACT(YEAR FROM p.fecha) = 2024) > 1000
+ORDER BY (SELECT SUM(p.total)
+          FROM pedidos p
+          WHERE p.cliente_id = c.id
+          AND EXTRACT(YEAR FROM p.fecha) = 2024) DESC;
+```
+
+<details>
+<summary>Pista</summary>
+La subconsulta se ejecuta dos veces por cada cliente (una en WHERE, otra en ORDER BY). Ademas, usa EXTRACT() sobre una columna que deberia estar indexada.
+</details>
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+-- Consulta optimizada: subconsulta solo una vez con CTE, sin funciones en columnas
+WITH gasto_2024 AS (
+    SELECT
+        cliente_id,
+        SUM(total) AS gasto_total
+    FROM pedidos
+    WHERE fecha >= '2024-01-01' AND fecha < '2025-01-01'
+    GROUP BY cliente_id
+    HAVING SUM(total) > 1000
+)
+SELECT c.nombre, c.email, c.ciudad, g.gasto_total
+FROM clientes c
+JOIN gasto_2024 g ON c.id = g.cliente_id
+ORDER BY g.gasto_total DESC;
+
+-- Indices recomendados:
+CREATE INDEX idx_pedidos_fecha ON pedidos(fecha);
+CREATE INDEX idx_pedidos_cliente_fecha ON pedidos(cliente_id, fecha);
+```
+
+Mejoras realizadas:
+1. CTE calcula el gasto una sola vez en lugar de dos subconsultas por fila.
+2. Rango de fechas en vez de EXTRACT() permite usar indices.
+3. HAVING filtra en la agregacion, no despues.
+4. Columnas especificas en vez de SELECT *.
+</details>
+
+---
+
+### Ejercicio 17: Jerarquia de empleados
+
+Usando la tabla `empleados`, genera un reporte que muestre la jerarquia completa: para cada empleado, su nombre, el nombre de su jefe directo, y el departamento. Incluye a los empleados que no tienen jefe (son los directores). Ordena por departamento y luego por salario descendente.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+    e.nombre AS empleado,
+    e.departamento,
+    e.salario,
+    COALESCE(j.nombre, 'Sin jefe (Director)') AS jefe_directo
+FROM empleados e
+LEFT JOIN empleados j ON e.jefe_id = j.id
+ORDER BY e.departamento, e.salario DESC;
+```
+
+Version mas avanzada con CTE recursiva para mostrar todos los niveles:
+
+```sql
+WITH RECURSIVE jerarquia AS (
+    -- Caso base: empleados sin jefe (directores)
+    SELECT id, nombre, departamento, salario, jefe_id, 1 AS nivel,
+           nombre AS cadena_jerarquia
+    FROM empleados
+    WHERE jefe_id IS NULL
+
+    UNION ALL
+
+    -- Caso recursivo: empleados con jefe
+    SELECT e.id, e.nombre, e.departamento, e.salario, e.jefe_id,
+           j.nivel + 1,
+           j.cadena_jerarquia || ' > ' || e.nombre
+    FROM empleados e
+    JOIN jerarquia j ON e.jefe_id = j.id
+)
+SELECT nombre, departamento, salario, nivel, cadena_jerarquia
+FROM jerarquia
+ORDER BY cadena_jerarquia;
+```
+</details>
+
+---
+
+### Ejercicio 18: Analisis de stock critico
+
+Identifica los productos cuyo stock es menor que la **cantidad promedio vendida por mes** en los ultimos 6 meses. Estos productos estan en riesgo de quedarse sin inventario. Muestra el nombre, stock actual, promedio mensual de ventas y para cuantos meses alcanza el stock.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+WITH ventas_mensuales AS (
+    SELECT
+        dp.producto_id,
+        EXTRACT(MONTH FROM pe.fecha) AS mes,
+        EXTRACT(YEAR FROM pe.fecha) AS anio,
+        SUM(dp.cantidad) AS vendido_en_mes
+    FROM detalle_pedidos dp
+    JOIN pedidos pe ON dp.pedido_id = pe.id
+    WHERE pe.fecha >= CURRENT_DATE - INTERVAL '6 months'
+    GROUP BY dp.producto_id, EXTRACT(MONTH FROM pe.fecha), EXTRACT(YEAR FROM pe.fecha)
+),
+promedio_mensual AS (
+    SELECT
+        producto_id,
+        ROUND(AVG(vendido_en_mes), 2) AS promedio_venta_mes
+    FROM ventas_mensuales
+    GROUP BY producto_id
+)
+SELECT
+    p.nombre,
+    p.stock AS stock_actual,
+    pm.promedio_venta_mes,
+    ROUND(p.stock / NULLIF(pm.promedio_venta_mes, 0), 1) AS meses_de_stock
+FROM productos p
+JOIN promedio_mensual pm ON p.id = pm.producto_id
+WHERE p.stock < pm.promedio_venta_mes
+ORDER BY meses_de_stock ASC;
+```
+</details>
+
+---
+
+<Callout type="info" title="Consejo final">
+Si terminaste todos los ejercicios, intenta ejecutar EXPLAIN ANALYZE en tus soluciones y piensa como podrias crear indices para mejorar el rendimiento. La optimizacion es un musculo que se entrena con practica.
+</Callout>
