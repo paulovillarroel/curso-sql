@@ -1,0 +1,616 @@
+import Callout from "../components/Callout.astro"
+import CommandTable from "../components/CommandTable.astro"
+
+Cuando te conectas a una base de datos nueva — ya sea en un proyecto de ciencia de datos, en un trabajo nuevo, o en una base de datos legacy — lo primero que necesitas saber es: **que tablas hay**, **que columnas tienen** y **que tipo de datos guardan**. PostgreSQL almacena toda esa informacion en tablas especiales que puedes consultar con SQL normal.
+
+<Callout type="info" title="Base de datos de practica">
+  Todos los ejemplos de este modulo se ejecutan sobre la base de datos `tienda` que creamos en el **Modulo 2**. Si aun no la tienes configurada, ve al Modulo 2 primero.
+</Callout>
+
+---
+
+## Atajos rapidos: psql y DBeaver
+
+Antes de escribir consultas, vale la pena conocer los atajos que ya tienes disponibles.
+
+### En psql (terminal)
+
+```
+\dt            -- listar todas las tablas
+\d productos   -- ver estructura de una tabla (columnas, tipos, constraints)
+\d+ productos  -- igual pero con mas detalle (tamano, comentarios)
+\dn            -- listar esquemas
+\df            -- listar funciones
+```
+
+### En DBeaver (interfaz grafica)
+
+En el **panel de navegacion** (izquierda), expande tu conexion → base de datos `tienda` → esquema `public` → **Tables**. Ahi ves todas las tablas. Haciendo click en una tabla puedes ver sus columnas, tipos, constraints, foreign keys, indices y mas.
+
+<Callout type="tip" title="¿Por que aprender las consultas SQL entonces?">
+  Los atajos de psql y DBeaver son rapidos para explorar, pero las consultas SQL te dan mucho mas control: puedes filtrar, combinar resultados, buscar en toda la base de datos y automatizar. Ademas, funcionan desde cualquier cliente SQL.
+</Callout>
+
+---
+
+## information_schema: el estandar SQL
+
+`information_schema` es un esquema especial definido por el **estandar SQL**. Existe en PostgreSQL, MySQL, SQL Server y otras bases de datos. Si aprendes a usarlo, tus consultas de metadatos seran **portables**.
+
+### Listar todas las tablas
+
+```sql
+SELECT table_name, table_type
+FROM information_schema.tables
+WHERE table_schema = 'public'
+ORDER BY table_name;
+```
+
+Resultado:
+
+```
+ table_name      | table_type
+-----------------+------------
+ clientes        | BASE TABLE
+ detalle_pedidos | BASE TABLE
+ empleados       | BASE TABLE
+ pedidos         | BASE TABLE
+ productos       | BASE TABLE
+```
+
+Filtramos por `table_schema = 'public'` porque ahi viven las tablas que creamos nosotros. Sin ese filtro verias tambien las tablas internas de PostgreSQL.
+
+### Ver columnas de una tabla
+
+```sql
+SELECT
+    column_name,
+    data_type,
+    is_nullable,
+    column_default
+FROM information_schema.columns
+WHERE table_name = 'productos'
+ORDER BY ordinal_position;
+```
+
+Resultado:
+
+```
+ column_name    | data_type         | is_nullable | column_default
+----------------+-------------------+-------------+---------------------------
+ id             | integer           | NO          | nextval('productos_id_seq')
+ nombre         | character varying | NO          | NULL
+ precio         | numeric           | NO          | NULL
+ categoria      | character varying | YES         | NULL
+ stock          | integer           | YES         | 0
+ fecha_creacion | date              | YES         | CURRENT_DATE
+```
+
+`ordinal_position` es el orden en que fueron definidas las columnas. `is_nullable` te dice si la columna acepta NULL.
+
+### Vistas mas utiles de information_schema
+
+<CommandTable commands={[
+  { command: "information_schema.tables", description: "Tablas y vistas de la base de datos (nombre, tipo, esquema)" },
+  { command: "information_schema.columns", description: "Columnas de cada tabla (nombre, tipo, nullable, default, posicion)" },
+  { command: "information_schema.table_constraints", description: "Restricciones: PRIMARY KEY, FOREIGN KEY, UNIQUE, CHECK" },
+  { command: "information_schema.key_column_usage", description: "Que columnas participan en cada constraint (PK, FK, UNIQUE)" },
+  { command: "information_schema.referential_constraints", description: "Detalle de foreign keys: a que tabla y constraint referencian" },
+]} />
+
+### Encontrar columnas por tipo de dato
+
+Supongamos que quieres saber que columnas de tipo texto (`character varying`) hay en toda la base de datos:
+
+```sql
+SELECT table_name, column_name, character_maximum_length
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND data_type = 'character varying'
+ORDER BY table_name, ordinal_position;
+```
+
+Resultado:
+
+```
+ table_name | column_name | character_maximum_length
+------------+-------------+-------------------------
+ clientes   | nombre      | 100
+ clientes   | email       | 100
+ clientes   | ciudad      | 50
+ empleados  | nombre      | 100
+ empleados  | departamento| 50
+ pedidos    | estado      | 20
+ productos  | nombre      | 100
+ productos  | categoria   | 50
+```
+
+### Ver restricciones de una tabla
+
+```sql
+SELECT
+    tc.constraint_name,
+    tc.constraint_type,
+    kcu.column_name
+FROM information_schema.table_constraints tc
+JOIN information_schema.key_column_usage kcu
+    ON tc.constraint_name = kcu.constraint_name
+WHERE tc.table_name = 'pedidos';
+```
+
+Resultado:
+
+```
+ constraint_name          | constraint_type | column_name
+--------------------------+-----------------+------------
+ pedidos_pkey             | PRIMARY KEY     | id
+ pedidos_cliente_id_fkey  | FOREIGN KEY     | cliente_id
+```
+
+Esto te dice que la tabla `pedidos` tiene una PRIMARY KEY en `id` y una FOREIGN KEY en `cliente_id`.
+
+---
+
+## pg_catalog: las tablas internas de PostgreSQL
+
+`pg_catalog` es el **catalogo interno** de PostgreSQL. Es mas detallado que `information_schema` pero es **especifico de PostgreSQL** — no funciona en MySQL ni SQL Server.
+
+<Callout type="warning" title="Portabilidad">
+  Si necesitas que tus consultas funcionen en distintas bases de datos, usa `information_schema`. Usa `pg_catalog` cuando necesites informacion extra que solo PostgreSQL proporciona (tamanos, OIDs, estadisticas internas).
+</Callout>
+
+### Tablas principales de pg_catalog
+
+<CommandTable commands={[
+  { command: "pg_class", description: "Tablas, indices, secuencias y vistas (nombre, tipo, tamano, OID)" },
+  { command: "pg_attribute", description: "Columnas de cada tabla (nombre, tipo OID, posicion, nullable)" },
+  { command: "pg_namespace", description: "Esquemas de la base de datos (public, pg_catalog, etc.)" },
+  { command: "pg_description", description: "Comentarios agregados con COMMENT ON a tablas y columnas" },
+  { command: "pg_constraint", description: "Constraints: PK, FK, UNIQUE, CHECK con detalle interno" },
+  { command: "pg_type", description: "Todos los tipos de datos disponibles en PostgreSQL" },
+]} />
+
+### Listar tablas con pg_catalog
+
+```sql
+SELECT relname AS tabla, reltuples::INTEGER AS filas_estimadas
+FROM pg_class
+WHERE relkind = 'r'                    -- 'r' = tabla regular
+  AND relnamespace = 'public'::regnamespace
+ORDER BY relname;
+```
+
+Resultado:
+
+```
+ tabla           | filas_estimadas
+-----------------+----------------
+ clientes        | 10
+ detalle_pedidos | 24
+ empleados       | 10
+ pedidos         | 15
+ productos       | 15
+```
+
+<Callout type="info" title="Filas estimadas vs reales">
+  `reltuples` es una **estimacion** que PostgreSQL mantiene internamente para el planificador de consultas. Puede no ser exacta si la tabla cambio despues del ultimo `ANALYZE`. Para el conteo exacto necesitas `SELECT COUNT(*)`.
+</Callout>
+
+---
+
+## Consultas practicas utiles
+
+Estas son consultas que vas a usar frecuentemente en tu trabajo diario.
+
+### Tamano de tablas
+
+```sql
+SELECT
+    relname AS tabla,
+    pg_size_pretty(pg_total_relation_size(oid)) AS tamano_total,
+    pg_size_pretty(pg_relation_size(oid)) AS tamano_datos,
+    pg_size_pretty(pg_indexes_size(oid)) AS tamano_indices
+FROM pg_class
+WHERE relkind = 'r'
+  AND relnamespace = 'public'::regnamespace
+ORDER BY pg_total_relation_size(oid) DESC;
+```
+
+Resultado:
+
+```
+ tabla           | tamano_total | tamano_datos | tamano_indices
+-----------------+--------------+--------------+----------------
+ detalle_pedidos | 32 kB        | 8192 bytes   | 16 kB
+ productos       | 32 kB        | 8192 bytes   | 16 kB
+ pedidos         | 32 kB        | 8192 bytes   | 16 kB
+ empleados       | 32 kB        | 8192 bytes   | 16 kB
+ clientes        | 32 kB        | 8192 bytes   | 16 kB
+```
+
+<Callout type="tip" title="¿Por que importa el tamano?">
+  Con datos pequenos como los nuestros, todas las tablas son diminutas. Pero en produccion, esta consulta te ayuda a identificar tablas que crecieron demasiado, que necesitan particionamiento o que tienen indices ocupando mas espacio que los datos.
+</Callout>
+
+### Ver las foreign keys y sus relaciones
+
+Esta consulta te muestra como se conectan las tablas entre si:
+
+```sql
+SELECT
+    tc.table_name AS tabla_origen,
+    kcu.column_name AS columna_fk,
+    ccu.table_name AS tabla_destino,
+    ccu.column_name AS columna_destino
+FROM information_schema.table_constraints tc
+JOIN information_schema.key_column_usage kcu
+    ON tc.constraint_name = kcu.constraint_name
+JOIN information_schema.constraint_column_usage ccu
+    ON tc.constraint_name = ccu.constraint_name
+WHERE tc.constraint_type = 'FOREIGN KEY'
+  AND tc.table_schema = 'public'
+ORDER BY tc.table_name;
+```
+
+Resultado:
+
+```
+ tabla_origen     | columna_fk  | tabla_destino | columna_destino
+------------------+-------------+---------------+-----------------
+ detalle_pedidos  | pedido_id   | pedidos       | id
+ detalle_pedidos  | producto_id | productos     | id
+ empleados        | jefe_id     | empleados     | id
+ pedidos          | cliente_id  | clientes      | id
+```
+
+Este resultado es basicamente el **diagrama de relaciones** de tu base de datos, pero generado automaticamente.
+
+### Buscar una columna por nombre
+
+Cuando llegas a una base de datos con muchas tablas y necesitas encontrar donde esta cierta informacion:
+
+```sql
+SELECT table_name, column_name, data_type
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND column_name LIKE '%fecha%'
+ORDER BY table_name;
+```
+
+Resultado:
+
+```
+ table_name | column_name       | data_type
+------------+-------------------+-----------
+ clientes   | fecha_registro    | date
+ empleados  | fecha_contratacion| date
+ pedidos    | fecha             | date
+ productos  | fecha_creacion    | date
+```
+
+<Callout type="tip" title="Busqueda flexible">
+  Cambia `'%fecha%'` por cualquier patron: `'%id%'` para encontrar claves, `'%email%'` para campos de correo, `'%precio%'` para valores monetarios. Usa `ILIKE` en vez de `LIKE` si quieres busqueda sin importar mayusculas/minusculas.
+</Callout>
+
+### Contar filas de todas las tablas
+
+```sql
+SELECT
+    table_name,
+    (SELECT COUNT(*) FROM information_schema.columns c
+     WHERE c.table_name = t.table_name
+       AND c.table_schema = 'public') AS num_columnas
+FROM information_schema.tables t
+WHERE table_schema = 'public'
+  AND table_type = 'BASE TABLE'
+ORDER BY table_name;
+```
+
+Resultado:
+
+```
+ table_name      | num_columnas
+-----------------+--------------
+ clientes        | 5
+ detalle_pedidos | 5
+ empleados       | 6
+ pedidos         | 5
+ productos       | 6
+```
+
+---
+
+## COMMENT ON: documentar tu base de datos
+
+PostgreSQL permite agregar **comentarios** a tablas, columnas, funciones y otros objetos. Estos comentarios quedan almacenados en la base de datos y son visibles para cualquier persona que se conecte.
+
+### Agregar comentarios
+
+```sql
+COMMENT ON TABLE productos IS 'Catalogo de productos de la tienda';
+COMMENT ON TABLE clientes IS 'Clientes registrados en el sistema';
+COMMENT ON TABLE pedidos IS 'Pedidos realizados por los clientes';
+
+COMMENT ON COLUMN productos.precio IS 'Precio unitario en pesos, sin IVA';
+COMMENT ON COLUMN productos.stock IS 'Unidades disponibles en bodega';
+COMMENT ON COLUMN pedidos.estado IS 'Valores posibles: pendiente, enviado, completado';
+```
+
+### Consultar comentarios de tablas
+
+```sql
+SELECT
+    c.relname AS tabla,
+    obj_description(c.oid) AS comentario
+FROM pg_class c
+WHERE c.relkind = 'r'
+  AND c.relnamespace = 'public'::regnamespace
+ORDER BY c.relname;
+```
+
+Resultado (despues de agregar los comentarios):
+
+```
+ tabla           | comentario
+-----------------+--------------------------------------
+ clientes        | Clientes registrados en el sistema
+ detalle_pedidos | NULL
+ empleados       | NULL
+ pedidos         | Pedidos realizados por los clientes
+ productos       | Catalogo de productos de la tienda
+```
+
+### Consultar comentarios de columnas
+
+```sql
+SELECT
+    a.attname AS columna,
+    col_description(a.attrelid, a.attnum) AS comentario
+FROM pg_attribute a
+JOIN pg_class c ON a.attrelid = c.oid
+WHERE c.relname = 'productos'
+  AND a.attnum > 0
+  AND NOT a.attisdropped
+ORDER BY a.attnum;
+```
+
+Resultado:
+
+```
+ columna        | comentario
+----------------+------------------------------------
+ id             | NULL
+ nombre         | NULL
+ precio         | Precio unitario en pesos, sin IVA
+ categoria      | NULL
+ stock          | Unidades disponibles en bodega
+ fecha_creacion | NULL
+```
+
+<Callout type="info" title="Buena practica">
+  Documentar tu base de datos con `COMMENT ON` es un habito excelente. Ayuda a que otros miembros del equipo (y tu yo del futuro) entiendan la estructura sin tener que adivinar que significa cada columna.
+</Callout>
+
+---
+
+## Patron completo: radiografia de una tabla
+
+Esta consulta combina toda la informacion que hemos visto en una sola vista. Es tu "navaja suiza" para explorar cualquier tabla:
+
+```sql
+SELECT
+    c.column_name AS columna,
+    c.data_type AS tipo,
+    CASE WHEN c.character_maximum_length IS NOT NULL
+         THEN c.data_type || '(' || c.character_maximum_length || ')'
+         ELSE c.data_type
+    END AS tipo_completo,
+    c.is_nullable AS acepta_null,
+    c.column_default AS valor_default,
+    CASE
+        WHEN pk.column_name IS NOT NULL THEN 'PK'
+        WHEN fk.column_name IS NOT NULL THEN 'FK -> ' || fk.ref_table
+        ELSE ''
+    END AS constraint_info,
+    col_description(
+        (SELECT oid FROM pg_class WHERE relname = c.table_name),
+        c.ordinal_position
+    ) AS comentario
+FROM information_schema.columns c
+LEFT JOIN (
+    SELECT kcu.column_name
+    FROM information_schema.table_constraints tc
+    JOIN information_schema.key_column_usage kcu
+        ON tc.constraint_name = kcu.constraint_name
+    WHERE tc.table_name = 'pedidos'
+      AND tc.constraint_type = 'PRIMARY KEY'
+) pk ON c.column_name = pk.column_name
+LEFT JOIN (
+    SELECT
+        kcu.column_name,
+        ccu.table_name AS ref_table
+    FROM information_schema.table_constraints tc
+    JOIN information_schema.key_column_usage kcu
+        ON tc.constraint_name = kcu.constraint_name
+    JOIN information_schema.constraint_column_usage ccu
+        ON tc.constraint_name = ccu.constraint_name
+    WHERE tc.table_name = 'pedidos'
+      AND tc.constraint_type = 'FOREIGN KEY'
+) fk ON c.column_name = fk.column_name
+WHERE c.table_name = 'pedidos'
+  AND c.table_schema = 'public'
+ORDER BY c.ordinal_position;
+```
+
+Resultado:
+
+```
+ columna    | tipo    | tipo_completo       | acepta_null | valor_default         | constraint_info   | comentario
+------------+---------+---------------------+-------------+-----------------------+-------------------+------------------------------------------
+ id         | integer | integer             | NO          | nextval(...)          | PK                | NULL
+ cliente_id | integer | integer             | YES         | NULL                  | FK -> clientes    | NULL
+ fecha      | date    | date                | YES         | CURRENT_DATE          |                   | NULL
+ total      | numeric | numeric             | YES         | NULL                  |                   | NULL
+ estado     | character varying | character varying(20)| YES  | 'pendiente'    |                   | Valores posibles: pendiente, enviado, completado
+```
+
+<Callout type="tip" title="Guardala como favorita">
+  Puedes guardar esta consulta en DBeaver (**SQL → Guardar como script**) y cambiar solo el nombre de la tabla (`'pedidos'`) cada vez que necesites explorar una tabla nueva. Es la forma mas rapida de entender una tabla desconocida.
+</Callout>
+
+---
+
+## ¿Que sigue?
+
+Ya sabes como explorar la estructura de cualquier base de datos PostgreSQL. En la seccion de **Ejercicios integradores** vas a poner en practica todo lo que aprendiste a lo largo del curso, combinando consultas de distintos modulos para resolver problemas mas complejos.
+
+---
+
+### Ejercicios
+
+**Ejercicio 1**: Usa `information_schema.tables` para listar todas las tablas de la base de datos `tienda`. Muestra el nombre y el tipo de tabla.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT table_name, table_type
+FROM information_schema.tables
+WHERE table_schema = 'public'
+ORDER BY table_name;
+```
+
+</details>
+
+**Ejercicio 2**: Consulta todas las columnas de la tabla `detalle_pedidos` mostrando: nombre de columna, tipo de dato, si acepta NULL y el valor por defecto. Ordena por la posicion original de las columnas.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+    column_name,
+    data_type,
+    is_nullable,
+    column_default
+FROM information_schema.columns
+WHERE table_name = 'detalle_pedidos'
+  AND table_schema = 'public'
+ORDER BY ordinal_position;
+```
+
+</details>
+
+**Ejercicio 3**: Encuentra todas las columnas que son FOREIGN KEY en la base de datos `tienda`. Muestra la tabla de origen, la columna FK, la tabla de destino y la columna de destino.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+    tc.table_name AS tabla_origen,
+    kcu.column_name AS columna_fk,
+    ccu.table_name AS tabla_destino,
+    ccu.column_name AS columna_destino
+FROM information_schema.table_constraints tc
+JOIN information_schema.key_column_usage kcu
+    ON tc.constraint_name = kcu.constraint_name
+JOIN information_schema.constraint_column_usage ccu
+    ON tc.constraint_name = ccu.constraint_name
+WHERE tc.constraint_type = 'FOREIGN KEY'
+  AND tc.table_schema = 'public'
+ORDER BY tc.table_name;
+```
+
+</details>
+
+**Ejercicio 4**: Calcula el tamano total de cada tabla en la base de datos, mostrando el resultado en formato legible (KB, MB). Ordena de mayor a menor tamano.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+    relname AS tabla,
+    pg_size_pretty(pg_total_relation_size(oid)) AS tamano_total,
+    pg_size_pretty(pg_relation_size(oid)) AS tamano_datos,
+    pg_size_pretty(pg_indexes_size(oid)) AS tamano_indices
+FROM pg_class
+WHERE relkind = 'r'
+  AND relnamespace = 'public'::regnamespace
+ORDER BY pg_total_relation_size(oid) DESC;
+```
+
+</details>
+
+**Ejercicio 5**: Agrega comentarios descriptivos a las 5 tablas de la base de datos y luego consultalos. Cada comentario debe describir brevemente que informacion almacena la tabla.
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+-- Agregar comentarios
+COMMENT ON TABLE productos IS 'Catalogo de productos de la tienda';
+COMMENT ON TABLE clientes IS 'Clientes registrados en el sistema';
+COMMENT ON TABLE pedidos IS 'Pedidos realizados por los clientes';
+COMMENT ON TABLE detalle_pedidos IS 'Lineas de detalle de cada pedido (productos y cantidades)';
+COMMENT ON TABLE empleados IS 'Empleados de la tienda con jerarquia de jefes';
+
+-- Consultar comentarios
+SELECT
+    c.relname AS tabla,
+    obj_description(c.oid) AS comentario
+FROM pg_class c
+WHERE c.relkind = 'r'
+  AND c.relnamespace = 'public'::regnamespace
+ORDER BY c.relname;
+```
+
+</details>
+
+**Ejercicio 6 (Desafio)**: Construye una consulta "radiografia" para la tabla `empleados` que muestre: nombre de columna, tipo de dato completo (incluyendo longitud para VARCHAR), si acepta NULL, valor por defecto, y si la columna es PK o FK (indicando la tabla referenciada).
+
+<details>
+<summary>Ver solucion</summary>
+
+```sql
+SELECT
+    c.column_name AS columna,
+    CASE WHEN c.character_maximum_length IS NOT NULL
+         THEN c.data_type || '(' || c.character_maximum_length || ')'
+         ELSE c.data_type
+    END AS tipo_completo,
+    c.is_nullable AS acepta_null,
+    c.column_default AS valor_default,
+    CASE
+        WHEN pk.column_name IS NOT NULL THEN 'PK'
+        WHEN fk.column_name IS NOT NULL THEN 'FK -> ' || fk.ref_table
+        ELSE ''
+    END AS constraint_info
+FROM information_schema.columns c
+LEFT JOIN (
+    SELECT kcu.column_name
+    FROM information_schema.table_constraints tc
+    JOIN information_schema.key_column_usage kcu
+        ON tc.constraint_name = kcu.constraint_name
+    WHERE tc.table_name = 'empleados'
+      AND tc.constraint_type = 'PRIMARY KEY'
+) pk ON c.column_name = pk.column_name
+LEFT JOIN (
+    SELECT
+        kcu.column_name,
+        ccu.table_name AS ref_table
+    FROM information_schema.table_constraints tc
+    JOIN information_schema.key_column_usage kcu
+        ON tc.constraint_name = kcu.constraint_name
+    JOIN information_schema.constraint_column_usage ccu
+        ON tc.constraint_name = ccu.constraint_name
+    WHERE tc.table_name = 'empleados'
+      AND tc.constraint_type = 'FOREIGN KEY'
+) fk ON c.column_name = fk.column_name
+WHERE c.table_name = 'empleados'
+  AND c.table_schema = 'public'
+ORDER BY c.ordinal_position;
+```
+
+</details>
