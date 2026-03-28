@@ -257,9 +257,221 @@ INSERT INTO productos (nombre, precio, categoria, stock) VALUES
 UPDATE productos SET precio = precio * 0.9
 WHERE categoria = 'Electronica' AND stock > 100;
 
--- DELETE
+-- DELETE (siempre con WHERE!)
 DELETE FROM pedidos WHERE estado = 'cancelado' AND fecha < '2023-01-01';
+
+-- INSERT con RETURNING
+INSERT INTO clientes (nombre, email, ciudad)
+VALUES ('Ana', 'ana@email.com', 'Santiago')
+RETURNING id, nombre;
+
+-- UPDATE con RETURNING
+UPDATE productos SET precio = precio * 0.9
+WHERE categoria = 'Electronica'
+RETURNING id, nombre, precio;
 ```
+
+<Callout type="warning" title="Regla de oro: SELECT antes de UPDATE/DELETE">
+  Siempre convierte tu UPDATE o DELETE en SELECT primero para verificar que filas vas a afectar. Un UPDATE o DELETE sin WHERE modifica **toda la tabla**.
+</Callout>
+
+---
+
+### ALTER TABLE
+
+```sql
+-- Agregar columna
+ALTER TABLE productos ADD COLUMN descripcion TEXT;
+ALTER TABLE productos ADD COLUMN activo BOOLEAN NOT NULL DEFAULT TRUE;
+
+-- Eliminar columna
+ALTER TABLE productos DROP COLUMN descripcion;
+
+-- Renombrar columna
+ALTER TABLE productos RENAME COLUMN stock TO cantidad_disponible;
+
+-- Cambiar tipo de dato
+ALTER TABLE productos ALTER COLUMN nombre TYPE VARCHAR(200);
+
+-- Agregar/quitar NOT NULL
+ALTER TABLE productos ALTER COLUMN categoria SET NOT NULL;
+ALTER TABLE productos ALTER COLUMN categoria DROP NOT NULL;
+
+-- Agregar/quitar DEFAULT
+ALTER TABLE productos ALTER COLUMN stock SET DEFAULT 0;
+ALTER TABLE productos ALTER COLUMN stock DROP DEFAULT;
+```
+
+---
+
+### DROP TABLE y CREATE TABLE
+
+```sql
+-- Eliminar tabla (error si no existe)
+DROP TABLE nombre_tabla;
+
+-- Eliminar tabla (sin error si no existe)
+DROP TABLE IF EXISTS nombre_tabla;
+
+-- Eliminar tabla y sus dependencias (foreign keys)
+DROP TABLE nombre_tabla CASCADE;
+
+-- Crear tabla solo si no existe
+CREATE TABLE IF NOT EXISTS logs (
+    id SERIAL PRIMARY KEY,
+    mensaje TEXT,
+    fecha TIMESTAMP DEFAULT NOW()
+);
+
+-- SERIAL: columna auto-incremental (1, 2, 3, ...)
+CREATE TABLE ejemplo (
+    id SERIAL PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL
+);
+```
+
+---
+
+### Funciones de ventana (Window Functions)
+
+```sql
+-- Sintaxis basica
+funcion() OVER (
+    PARTITION BY columna    -- divide en grupos (opcional)
+    ORDER BY columna        -- ordena dentro del grupo (opcional)
+)
+
+-- Promedio por departamento (sin colapsar filas)
+SELECT nombre, departamento, salario,
+    AVG(salario) OVER (PARTITION BY departamento) AS promedio_depto
+FROM empleados;
+
+-- Porcentaje del total
+SELECT nombre, salario,
+    ROUND(salario::NUMERIC / SUM(salario) OVER() * 100, 2) AS pct
+FROM empleados;
+```
+
+<CommandTable commands={[
+  { command: "ROW_NUMBER() OVER(...)", description: "Numero secuencial unico (1, 2, 3, 4...)" },
+  { command: "RANK() OVER(...)", description: "Ranking con saltos en empates (1, 2, 2, 4...)" },
+  { command: "DENSE_RANK() OVER(...)", description: "Ranking sin saltos (1, 2, 2, 3...)" },
+  { command: "NTILE(n) OVER(...)", description: "Divide filas en n grupos iguales" },
+  { command: "LAG(col, n) OVER(...)", description: "Valor de n filas antes" },
+  { command: "LEAD(col, n) OVER(...)", description: "Valor de n filas despues" },
+  { command: "SUM(col) OVER(ORDER BY ...)", description: "Suma acumulada (running total)" },
+]} />
+
+```sql
+-- Patron Top-N por grupo (CTE + ROW_NUMBER)
+WITH ranking AS (
+    SELECT nombre, categoria,
+        ROW_NUMBER() OVER (PARTITION BY categoria ORDER BY precio DESC) AS rn
+    FROM productos
+)
+SELECT * FROM ranking WHERE rn <= 3;
+
+-- LAG: comparar con fila anterior
+SELECT fecha, total,
+    LAG(total) OVER (ORDER BY fecha) AS anterior,
+    total - LAG(total) OVER (ORDER BY fecha) AS diferencia
+FROM pedidos;
+
+-- Reutilizar ventana con WINDOW
+SELECT nombre, salario,
+    AVG(salario) OVER w AS promedio,
+    MIN(salario) OVER w AS minimo
+FROM empleados
+WINDOW w AS (PARTITION BY departamento);
+```
+
+---
+
+### Funciones estadisticas
+
+<CommandTable commands={[
+  { command: "STDDEV(col)", description: "Desviacion estandar (dispersion de datos)" },
+  { command: "VARIANCE(col)", description: "Varianza (cuadrado de la desviacion estandar)" },
+  { command: "PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY col)", description: "Mediana (percentil 50)" },
+  { command: "PERCENTILE_DISC(p) WITHIN GROUP (ORDER BY col)", description: "Percentil discreto (valor real mas cercano)" },
+  { command: "MODE() WITHIN GROUP (ORDER BY col)", description: "Valor mas frecuente (moda)" },
+]} />
+
+```sql
+-- Mediana y cuartiles
+SELECT
+    PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY precio) AS p25,
+    PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY precio) AS mediana,
+    PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY precio) AS p75
+FROM productos;
+```
+
+---
+
+### FILTER (agregacion condicional, PostgreSQL)
+
+```sql
+-- Contar/sumar condicionalmente (mas legible que CASE WHEN)
+SELECT
+    COUNT(*) AS total,
+    COUNT(*) FILTER (WHERE estado = 'completado') AS completados,
+    COUNT(*) FILTER (WHERE estado = 'pendiente') AS pendientes,
+    AVG(total) FILTER (WHERE estado = 'completado') AS promedio_completados
+FROM pedidos;
+```
+
+---
+
+### Metadatos: explorar la estructura
+
+```sql
+-- Listar todas las tablas
+SELECT table_name FROM information_schema.tables
+WHERE table_schema = 'public' ORDER BY table_name;
+
+-- Ver columnas de una tabla
+SELECT column_name, data_type, is_nullable, column_default
+FROM information_schema.columns
+WHERE table_name = 'productos' ORDER BY ordinal_position;
+
+-- Ver foreign keys
+SELECT tc.table_name, kcu.column_name, ccu.table_name AS ref_table
+FROM information_schema.table_constraints tc
+JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name
+JOIN information_schema.constraint_column_usage ccu ON tc.constraint_name = ccu.constraint_name
+WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = 'public';
+
+-- Tamano de tablas
+SELECT relname AS tabla, pg_size_pretty(pg_total_relation_size(oid)) AS tamano
+FROM pg_class WHERE relkind = 'r' AND relnamespace = 'public'::regnamespace
+ORDER BY pg_total_relation_size(oid) DESC;
+
+-- Buscar columna por nombre
+SELECT table_name, column_name, data_type
+FROM information_schema.columns
+WHERE table_schema = 'public' AND column_name LIKE '%fecha%';
+
+-- Agregar comentario a tabla/columna
+COMMENT ON TABLE productos IS 'Catalogo de productos';
+COMMENT ON COLUMN productos.precio IS 'Precio sin IVA';
+```
+
+---
+
+### Tipos de datos mas comunes
+
+<CommandTable commands={[
+  { command: "INTEGER / INT", description: "Numeros enteros. Ej: stock, cantidad" },
+  { command: "SERIAL", description: "Entero auto-incremental para IDs" },
+  { command: "NUMERIC(p,s) / DECIMAL", description: "Decimales exactos. Ej: DECIMAL(10,2)" },
+  { command: "VARCHAR(n)", description: "Texto con limite. Ej: VARCHAR(100)" },
+  { command: "TEXT", description: "Texto sin limite" },
+  { command: "BOOLEAN", description: "TRUE / FALSE" },
+  { command: "DATE", description: "Fecha (YYYY-MM-DD)" },
+  { command: "TIMESTAMP / TIMESTAMPTZ", description: "Fecha + hora (con o sin zona horaria)" },
+  { command: "JSONB", description: "JSON binario (permite consultas internas)" },
+  { command: "UUID", description: "Identificador unico universal" },
+]} />
 
 ---
 
