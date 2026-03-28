@@ -88,6 +88,28 @@ Resultado:
 
 `ordinal_position` es el orden en que fueron definidas las columnas. `is_nullable` te dice si la columna acepta NULL.
 
+### Tipos de datos mas comunes en PostgreSQL
+
+Cuando explores columnas vas a encontrar estos tipos de datos frecuentemente. Aqui tienes una referencia rapida:
+
+<CommandTable commands={[
+  { command: "INTEGER / INT", description: "Numeros enteros (-2 mil millones a 2 mil millones). Ej: stock, cantidad" },
+  { command: "SERIAL", description: "Entero auto-incremental. Se usa para IDs (PRIMARY KEY)" },
+  { command: "NUMERIC(p,s) / DECIMAL", description: "Numeros exactos con decimales. Ej: precio DECIMAL(10,2) = hasta 10 digitos, 2 decimales" },
+  { command: "VARCHAR(n)", description: "Texto de longitud variable con limite. Ej: nombre VARCHAR(100)" },
+  { command: "TEXT", description: "Texto de longitud ilimitada. Ej: descripciones largas, comentarios" },
+  { command: "BOOLEAN", description: "Verdadero (TRUE) o falso (FALSE). Ej: activo, verificado" },
+  { command: "DATE", description: "Fecha sin hora (YYYY-MM-DD). Ej: fecha_registro, fecha_nacimiento" },
+  { command: "TIMESTAMP", description: "Fecha + hora (YYYY-MM-DD HH:MI:SS). Ej: created_at, updated_at" },
+  { command: "TIMESTAMPTZ", description: "Timestamp con zona horaria. Recomendado cuando trabajas con usuarios en distintos paises" },
+  { command: "JSONB", description: "Datos JSON binario, permite consultas dentro del JSON. Muy usado en apps modernas" },
+  { command: "UUID", description: "Identificador unico universal (128 bits). Alternativa a SERIAL para IDs" },
+]} />
+
+<Callout type="info" title="Documentacion oficial">
+  PostgreSQL soporta muchos mas tipos de datos (arrays, rangos, geometricos, red, etc.). Consulta la [documentacion oficial de tipos de datos](https://www.postgresql.org/docs/current/datatype.html) para la referencia completa.
+</Callout>
+
 ### Vistas mas utiles de information_schema
 
 <CommandTable commands={[
