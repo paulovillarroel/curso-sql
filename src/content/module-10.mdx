@@ -19,7 +19,7 @@ La sintaxis basica:
 
 ```sql
 INSERT INTO productos (nombre, precio, categoria, stock, fecha_creacion)
-VALUES ('Teclado Mecanico', 89.99, 'Perifericos', 25, CURRENT_DATE);
+VALUES ('Base para Laptop', 45.99, 'Accesorios', 25, CURRENT_DATE);
 ```
 
 <Callout type="info">
@@ -33,9 +33,9 @@ En lugar de ejecutar un INSERT por cada fila, podes insertar varias de una vez:
 ```sql
 INSERT INTO productos (nombre, precio, categoria, stock, fecha_creacion)
 VALUES
-    ('Mouse Inalambrico', 35.50, 'Perifericos', 100, CURRENT_DATE),
-    ('Monitor 27 pulgadas', 299.99, 'Monitores', 15, CURRENT_DATE),
-    ('Cable HDMI 2m', 12.99, 'Cables', 200, CURRENT_DATE);
+    ('Alfombrilla Escritorio', 35.50, 'Accesorios', 100, CURRENT_DATE),
+    ('Organizador Cables', 14.99, 'Accesorios', 15, CURRENT_DATE),
+    ('Reposamuñecas Teclado', 22.99, 'Muebles', 200, CURRENT_DATE);
 ```
 
 <Callout type="performance" title="Inserciones en bulk">
