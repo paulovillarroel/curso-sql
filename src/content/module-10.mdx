@@ -307,6 +307,218 @@ COMMIT;
 
 ---
 
+### ALTER TABLE: modificando la estructura
+
+Los comandos anteriores (`INSERT`, `UPDATE`, `DELETE`) modifican **datos**. Pero a veces necesitas modificar la **estructura** de una tabla: agregar columnas, eliminarlas o cambiar sus propiedades. Para eso existe `ALTER TABLE`.
+
+#### Agregar una columna
+
+```sql
+ALTER TABLE productos
+ADD COLUMN descripcion TEXT;
+```
+
+La nueva columna se agrega con valor `NULL` en todas las filas existentes. Podes agregar un valor por defecto:
+
+```sql
+ALTER TABLE productos
+ADD COLUMN activo BOOLEAN DEFAULT TRUE;
+```
+
+Ahora todas las filas existentes tendran `activo = TRUE`, y las nuevas filas tambien (a menos que especifiques otro valor).
+
+#### NOT NULL: columnas obligatorias
+
+`NOT NULL` significa que la columna **siempre debe tener un valor** — no puede quedar vacia. Es una restriccion fundamental para proteger la integridad de tus datos:
+
+```sql
+-- Al crear la tabla
+CREATE TABLE ejemplo (
+    id SERIAL PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL,     -- obligatorio
+    email VARCHAR(100),               -- opcional (acepta NULL)
+    activo BOOLEAN NOT NULL DEFAULT TRUE  -- obligatorio, con default
+);
+```
+
+Si intentas insertar una fila sin darle valor a una columna `NOT NULL` (y no tiene default), PostgreSQL da error:
+
+```sql
+INSERT INTO ejemplo (email) VALUES ('test@email.com');
+-- ERROR: null value in column "nombre" violates not-null constraint
+```
+
+<Callout type="tip" title="Agregar columna NOT NULL a tabla existente">
+  Si agregas una columna `NOT NULL` a una tabla que ya tiene datos, debes incluir un `DEFAULT`. De lo contrario PostgreSQL no sabra que valor asignar a las filas existentes y dara error:
+
+  ```sql
+  -- ERROR: la tabla tiene filas, no puede ser NULL sin default
+  ALTER TABLE productos ADD COLUMN codigo VARCHAR(20) NOT NULL;
+
+  -- CORRECTO: con default funciona
+  ALTER TABLE productos ADD COLUMN codigo VARCHAR(20) NOT NULL DEFAULT 'SIN-CODIGO';
+  ```
+</Callout>
+
+#### SERIAL: columnas auto-incrementales
+
+`SERIAL` es un tipo especial que genera un numero entero **auto-incremental**. Cada vez que insertas una fila, PostgreSQL asigna automaticamente el siguiente numero. Es la forma mas comun de crear IDs:
+
+```sql
+CREATE TABLE categorias (
+    id SERIAL PRIMARY KEY,       -- 1, 2, 3, 4, ...
+    nombre VARCHAR(50) NOT NULL
+);
+
+-- No necesitas especificar el id al insertar
+INSERT INTO categorias (nombre) VALUES ('Electronica');  -- id = 1
+INSERT INTO categorias (nombre) VALUES ('Muebles');      -- id = 2
+INSERT INTO categorias (nombre) VALUES ('Accesorios');   -- id = 3
+```
+
+<Callout type="info" title="¿Que es SERIAL realmente?">
+  `SERIAL` no es un tipo de dato verdadero. Es un atajo de PostgreSQL que hace 3 cosas por ti:
+
+  1. Crea la columna como `INTEGER NOT NULL`
+  2. Crea una **secuencia** (un contador) asociada a la columna
+  3. Establece el default como `nextval('nombre_secuencia')`
+
+  Para tablas nuevas, PostgreSQL recomienda usar `GENERATED ALWAYS AS IDENTITY` como alternativa mas moderna:
+
+  ```sql
+  CREATE TABLE categorias (
+      id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      nombre VARCHAR(50) NOT NULL
+  );
+  ```
+</Callout>
+
+#### Eliminar una columna
+
+```sql
+ALTER TABLE productos
+DROP COLUMN descripcion;
+```
+
+<Callout type="warning" title="Eliminar columnas es irreversible">
+  `DROP COLUMN` elimina la columna **y todos sus datos** de forma permanente. No hay forma de recuperarla (salvo un backup). Siempre verifica antes de ejecutar.
+</Callout>
+
+Si la columna tiene dependencias (foreign keys, vistas, indices), PostgreSQL te dara un error. Podes forzar la eliminacion con `CASCADE`, pero usalo con cuidado:
+
+```sql
+-- Eliminar la columna y todo lo que dependa de ella
+ALTER TABLE productos
+DROP COLUMN categoria CASCADE;
+```
+
+#### Renombrar una columna
+
+```sql
+ALTER TABLE productos
+RENAME COLUMN stock TO cantidad_disponible;
+```
+
+#### Cambiar el tipo de dato
+
+```sql
+ALTER TABLE productos
+ALTER COLUMN nombre TYPE VARCHAR(200);
+```
+
+<Callout type="info" title="Conversiones de tipo">
+  No todas las conversiones son posibles. Por ejemplo, podes ampliar un `VARCHAR(50)` a `VARCHAR(200)`, pero convertir un `TEXT` con letras a `INTEGER` va a fallar si hay datos que no son numeros. PostgreSQL te avisara con un error antes de hacer nada.
+</Callout>
+
+#### Resumen de ALTER TABLE
+
+<CommandTable commands={[
+  { command: "ADD COLUMN nombre tipo", description: "Agrega una nueva columna a la tabla" },
+  { command: "DROP COLUMN nombre", description: "Elimina una columna y todos sus datos" },
+  { command: "RENAME COLUMN viejo TO nuevo", description: "Cambia el nombre de una columna" },
+  { command: "ALTER COLUMN nombre TYPE tipo", description: "Cambia el tipo de dato de una columna" },
+  { command: "ALTER COLUMN nombre SET DEFAULT valor", description: "Establece un valor por defecto" },
+  { command: "ALTER COLUMN nombre SET NOT NULL", description: "Hace la columna obligatoria (no acepta NULL)" },
+  { command: "ALTER COLUMN nombre DROP NOT NULL", description: "Permite NULL en la columna" },
+]} />
+
+---
+
+### DROP TABLE: eliminando tablas
+
+#### Eliminar una tabla
+
+```sql
+DROP TABLE productos_premium;
+```
+
+Esto elimina la tabla completa: estructura, datos, indices, todo. Es **irreversible**.
+
+#### DROP TABLE IF EXISTS
+
+Si intentas eliminar una tabla que no existe, PostgreSQL da error. Para evitarlo, usa `IF EXISTS`:
+
+```sql
+-- Sin IF EXISTS: da error si la tabla no existe
+DROP TABLE productos_premium;  -- ERROR: table "productos_premium" does not exist
+
+-- Con IF EXISTS: no da error, simplemente no hace nada
+DROP TABLE IF EXISTS productos_premium;  -- NOTICE: table does not exist, skipping
+```
+
+<Callout type="tip" title="Cuando usar IF EXISTS">
+  `IF EXISTS` es especialmente util en **scripts de inicializacion**. Es comun ver este patron al inicio de un script que crea tablas:
+
+  ```sql
+  -- Borrar tablas si existen (para empezar limpio)
+  DROP TABLE IF EXISTS detalle_pedidos;
+  DROP TABLE IF EXISTS pedidos;
+  DROP TABLE IF EXISTS productos;
+  DROP TABLE IF EXISTS clientes;
+  DROP TABLE IF EXISTS empleados;
+
+  -- Crear las tablas desde cero
+  CREATE TABLE clientes ( ... );
+  CREATE TABLE productos ( ... );
+  -- etc.
+  ```
+
+  Asi el script se puede ejecutar multiples veces sin errores.
+</Callout>
+
+<Callout type="warning" title="Cuidado con el orden de eliminacion">
+  Si una tabla tiene foreign keys que la referencian, no la podes eliminar directamente. Debes eliminar primero las tablas que dependen de ella, o usar `CASCADE`:
+
+  ```sql
+  -- Error: pedidos referencia a clientes
+  DROP TABLE clientes;
+
+  -- Opcion 1: eliminar en orden correcto
+  DROP TABLE IF EXISTS detalle_pedidos;
+  DROP TABLE IF EXISTS pedidos;
+  DROP TABLE IF EXISTS clientes;
+
+  -- Opcion 2: forzar con CASCADE (elimina las FK automaticamente)
+  DROP TABLE clientes CASCADE;
+  ```
+</Callout>
+
+#### CREATE TABLE IF NOT EXISTS
+
+El complemento de `DROP TABLE IF EXISTS`. Crea la tabla solo si no existe:
+
+```sql
+CREATE TABLE IF NOT EXISTS logs (
+    id SERIAL PRIMARY KEY,
+    mensaje TEXT,
+    fecha TIMESTAMP DEFAULT NOW()
+);
+```
+
+Esto es util para scripts que pueden ejecutarse multiples veces sin fallar.
+
+---
+
 ### Ejercicios
 
 **Ejercicio 1:** Inserta 3 nuevos productos en la tabla `productos` usando un solo INSERT. Usa `RETURNING` para ver los IDs generados.
@@ -371,4 +583,39 @@ VALUES (
     'pendiente'
 )
 RETURNING *;
+```
+
+**Ejercicio 6:** Agrega una columna `telefono VARCHAR(20)` a la tabla `clientes`. Luego actualiza el telefono de Maria Garcia a '+56 9 1234 5678'. Finalmente, elimina la columna.
+
+```sql
+-- Agregar columna
+ALTER TABLE clientes ADD COLUMN telefono VARCHAR(20);
+
+-- Actualizar un registro
+UPDATE clientes SET telefono = '+56 9 1234 5678' WHERE nombre = 'Maria Garcia';
+
+-- Verificar
+SELECT nombre, email, telefono FROM clientes WHERE nombre = 'Maria Garcia';
+
+-- Eliminar columna (cuando ya no la necesites)
+ALTER TABLE clientes DROP COLUMN telefono;
+```
+
+**Ejercicio 7:** Escribe un script que elimine la tabla `productos_premium` (si existe) y la vuelva a crear con las columnas: id, nombre, precio y fecha_agregado. Luego inserta los 3 productos mas caros desde la tabla `productos`.
+
+```sql
+DROP TABLE IF EXISTS productos_premium;
+
+CREATE TABLE productos_premium (
+    id SERIAL PRIMARY KEY,
+    nombre VARCHAR(100),
+    precio DECIMAL(10,2),
+    fecha_agregado DATE DEFAULT CURRENT_DATE
+);
+
+INSERT INTO productos_premium (nombre, precio)
+SELECT nombre, precio
+FROM productos
+ORDER BY precio DESC
+LIMIT 3;
 ```
