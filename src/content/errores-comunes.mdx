@@ -138,32 +138,79 @@ Si una consulta devuelve muchas mas filas de las esperadas, lo primero que debes
 ```sql
 -- Querias actualizar UN producto...
 UPDATE productos SET precio = 99.99;
+-- UPDATE 15   ← actualizo TODOS los productos
 
--- ...pero actualizaste TODOS los productos
+-- Querias borrar UN pedido...
+DELETE FROM pedidos;
+-- DELETE 15   ← borro TODOS los pedidos
 ```
 
-**Por que pasa:** Sin WHERE, la operacion se aplica a **toda la tabla**. No hay mensaje de error; SQL hace exactamente lo que le pediste.
+**Por que pasa:** Sin WHERE, la operacion se aplica a **toda la tabla**. No hay mensaje de error ni confirmacion; SQL hace exactamente lo que le pediste. El unico indicio es el numero de filas afectadas (`UPDATE 15` en vez de `UPDATE 1`), pero para ese momento ya es tarde.
 
-**Como solucionarlo:** SIEMPRE revisa tu WHERE antes de ejecutar UPDATE o DELETE. Mejor aun, primero haz un SELECT con la misma condicion para verificar que afectas las filas correctas:
+**Las consecuencias:**
+
+- `UPDATE tabla SET columna = valor;` → **todas las filas** ahora tienen el mismo valor. Perdiste los datos originales.
+- `DELETE FROM tabla;` → **todas las filas** eliminadas. La tabla queda vacia.
+- En ambos casos, si no estabas dentro de una transaccion, **no hay forma de deshacer el cambio** (salvo restaurar un backup).
+
+**Lo mismo aplica a DELETE con WHERE incorrecto:**
 
 ```sql
--- Paso 1: Verificar que filas afectas
-SELECT * FROM productos WHERE id = 42;
-
--- Paso 2: Solo si el SELECT muestra lo correcto, ejecutar el UPDATE
-UPDATE productos SET precio = 99.99 WHERE id = 42;
+-- Querias borrar pedidos pendientes de enero...
+DELETE FROM pedidos WHERE estado = 'pendiente';
+-- ...pero olvidaste la condicion de fecha. Borraste TODOS los pendientes.
 ```
 
-<Callout type="warning" title="Regla de supervivencia">
-Antes de ejecutar un UPDATE o DELETE, **siempre** convierte la consulta en SELECT primero para ver que filas va a afectar. Y si trabajas con datos de produccion, envuelve todo en una transaccion:
+**Como prevenirlo — la tecnica SELECT primero:**
+
+```sql
+-- Paso 1: SIEMPRE verifica con SELECT que filas vas a afectar
+SELECT id, nombre, precio FROM productos WHERE id = 42;
+-- Resultado: 1 fila. Perfecto, es lo que espero.
+
+-- Paso 2: Solo si el SELECT muestra lo correcto, ejecuta el UPDATE
+UPDATE productos SET precio = 99.99 WHERE id = 42;
+-- UPDATE 1   ← confirma que solo afecto 1 fila
+```
+
+**Como prevenirlo — transacciones:**
 
 ```sql
 BEGIN;
+
+-- Ejecuta tu UPDATE o DELETE
 UPDATE productos SET precio = 99.99 WHERE id = 42;
--- Revisa el resultado...
--- Si esta bien: COMMIT;
--- Si algo salio mal: ROLLBACK;
+
+-- Verifica el resultado
+SELECT * FROM productos WHERE id = 42;
+
+-- Si todo esta bien:
+COMMIT;
+
+-- Si algo salio mal (ejecuta esto EN VEZ de COMMIT):
+-- ROLLBACK;
 ```
+
+<Callout type="warning" title="Checklist antes de UPDATE/DELETE">
+  1. **¿Tiene WHERE?** Si no, probablemente es un error.
+  2. **¿El SELECT con el mismo WHERE devuelve las filas correctas?** Ejecutalo primero.
+  3. **¿Cuantas filas va a afectar?** Si esperas 1 y afecta 1000, algo esta mal.
+  4. **¿Estas en produccion?** Usa `BEGIN` / `COMMIT` o `ROLLBACK`.
+  5. **¿Tienes backup?** Si la tabla es critica, verifica antes de ejecutar.
+</Callout>
+
+<Callout type="tip" title="Truco: cuenta antes de modificar">
+  Si no estas seguro de cuantas filas va a afectar tu UPDATE o DELETE, usa COUNT primero:
+
+  ```sql
+  -- ¿Cuantas filas voy a modificar?
+  SELECT COUNT(*) FROM productos WHERE categoria = 'Electronica';
+  -- Resultado: 7. OK, son los que espero.
+
+  UPDATE productos SET precio = ROUND(precio * 1.10, 2)
+  WHERE categoria = 'Electronica';
+  -- UPDATE 7   ← coincide con el COUNT. Perfecto.
+  ```
 </Callout>
 
 ---
