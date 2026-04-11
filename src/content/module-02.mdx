@@ -50,16 +50,23 @@ Descargalo desde [dbeaver.io/download](https://dbeaver.io/download/) e instalalo
 
 Abre DBeaver y sigue estos pasos para crear tu primera conexion:
 
-1. Click en **Nueva Conexion** (el icono de enchufe con un signo +, arriba a la izquierda)
-2. Selecciona **PostgreSQL** en la lista y click en **Siguiente**
+1. Ve al menu **Database → New Database Connection** (o usa el atajo `Ctrl+Shift+N`)
+2. Selecciona **PostgreSQL** en la lista y click en **Next**
 3. Completa los datos de conexion:
    - **Host**: `localhost`
-   - **Puerto**: `5432`
+   - **Port**: `5432`
    - **Database**: `postgres` (la base de datos por defecto)
    - **Username**: `postgres`
    - **Password**: la contrasena que creaste durante la instalacion
-4. Click en **Test Connection** para verificar que funciona
-5. Si el test es exitoso, click en **Finalizar**
+4. Ve a la pestana **PostgreSQL** (en la parte superior del dialogo) y marca la opcion **Show all databases**
+5. Click en **Test Connection** para verificar que funciona
+6. Si el test es exitoso, click en **Finish**
+
+![Configuracion de conexion PostgreSQL mostrando la opcion Show all databases](/curso-sql/images/show-all-databases.webp)
+
+<Callout type="warning" title="Por que activar Show all databases?">
+  PostgreSQL en DBeaver solo muestra por defecto la base de datos a la que te conectaste (`postgres`). Si no activas **Show all databases**, cuando crees la base de datos `tienda` mas adelante, no la veras en el panel de navegacion. Esta opcion solo esta disponible cuando usas el tipo de conexion **Host** (que es el que viene por defecto).
+</Callout>
 
 <Callout type="warning" title="Si la conexion falla">
   Verifica que: (1) PostgreSQL esta corriendo como servicio, (2) el puerto es 5432, (3) la contrasena es correcta. En Windows, busca "Servicios" y verifica que "postgresql" este en estado "Ejecutando".
@@ -90,14 +97,14 @@ Un cliente puede tener muchos pedidos. Cada pedido puede tener muchos detalles. 
 
 En DBeaver:
 
-1. Click derecho en tu conexion (en el panel izquierdo) → **Crear** → **Database**
-2. Escribe `tienda` como nombre
-3. Click en **OK**
+1. En el panel izquierdo (Database Navigator), expande tu conexion haciendo click en la flecha junto a ella
+2. Haz click derecho sobre el nodo **Databases** → **Create New Database**
+3. Escribe `tienda` como nombre y click en **OK**
 4. Doble click en `tienda` para conectarte a ella
 
 ### Crear las tablas
 
-Abre un nuevo editor SQL en DBeaver (`Ctrl+Enter` en Windows o `Cmd+Enter` en macOS, o usa el menu **SQL → Nuevo editor SQL**). Asegurate de estar conectado a la base de datos `tienda` (verifica en la barra superior del editor).
+Abre un nuevo editor SQL en DBeaver usando el menu **SQL Editor → New SQL Editor** (o el atajo `Ctrl+]` en Windows/Linux, `⌃]` en macOS). Asegurate de estar conectado a la base de datos `tienda` (verifica en la barra superior del editor).
 
 Copia y ejecuta este SQL:
 
@@ -236,7 +243,7 @@ INSERT INTO empleados (nombre, departamento, salario, fecha_contratacion, jefe_i
 ```
 
 <Callout type="tip" title="Atajo: usa el script del repositorio">
-  Si clonaste el repositorio del curso, el script completo esta en `db/init.sql`. Puedes abrirlo directamente en DBeaver con **Archivo → Abrir archivo** y ejecutarlo. Es mas rapido que copiar y pegar.
+  Si clonaste el repositorio del curso, el script completo esta en `db/init.sql`. Puedes abrirlo directamente en DBeaver con **File → Open File** y ejecutarlo con `Alt+X` (macOS: `⌥+X`). Es mas rapido que copiar y pegar.
 </Callout>
 
 ### Verificar que todo funciona
@@ -276,18 +283,142 @@ Puedes copiar el SQL de creacion de tablas e insercion de datos de la seccion an
 
 ---
 
-## Conociendo DBeaver (opcional)
+## Conociendo DBeaver
 
-Si instalaste DBeaver, estas son las funciones que mas vas a usar:
+Antes de empezar a escribir SQL, vale la pena conocer las partes principales de DBeaver. Esto te va a ahorrar tiempo y confusion a lo largo del curso.
 
-- **Editor SQL**: donde escribes y ejecutas consultas. Atajo: `Ctrl+Enter` (ejecutar todo) o selecciona una parte y presiona `Ctrl+Enter` para ejecutar solo esa parte.
-- **Panel de resultados**: debajo del editor, muestra los resultados de tu ultima consulta en formato de tabla.
-- **Panel de navegacion** (izquierda): muestra tus conexiones, bases de datos, tablas y columnas. Puedes explorar la estructura de la base de datos sin escribir SQL.
-- **Multiples pestanas**: puedes tener varios editores SQL abiertos al mismo tiempo.
+### La ventana principal
 
-<Callout type="tip" title="Atajo util">
-  Selecciona solo una parte del SQL y presiona `Ctrl+Enter` para ejecutar unicamente esa porcion. Esto es muy util cuando tienes varias consultas en el mismo editor y quieres probar una a la vez.
+La interfaz de DBeaver se divide en estas areas:
+
+- **Menu bar** (arriba): los menus File, Edit, SQL Editor, Database, Window, etc.
+- **Toolbar** (debajo del menu): botones de acceso rapido para las acciones mas comunes
+- **Views** (paneles laterales): ventanas como el Database Navigator (izquierda) que muestran informacion de navegacion
+- **Editor** (area central): donde se abren los editores SQL, las propiedades de tablas, los datos, los diagramas, etc.
+- **Status bar** (abajo): muestra informacion de estado de la conexion actual
+
+![Vista general de la ventana de DBeaver con sus areas principales](/curso-sql/images/appwindow-with-markup.webp)
+
+Cada panel se puede cerrar, minimizar o maximizar usando los botones en su barra de titulo:
+
+![Botones de control: Close, Minimize y Maximize](/curso-sql/images/view-editor-controls.webp)
+
+### Database Navigator (panel izquierdo)
+
+El **Database Navigator** es el panel mas importante. Muestra un arbol jerarquico con toda la estructura de tus bases de datos:
+
+```
+Conexion (PostgreSQL)
+  └── Databases
+        └── tienda
+              └── Schemas
+                    └── public
+                          ├── Tables
+                          │     ├── productos
+                          │     ├── clientes
+                          │     └── ...
+                          ├── Views
+                          ├── Functions
+                          └── Sequences
+```
+
+Desde aca puedes explorar tablas, columnas, tipos de datos, indices y relaciones sin escribir una sola linea de SQL. Haz click en la flecha junto a cada nodo para expandirlo.
+
+![Database Navigator mostrando la estructura de una base de datos con filtros](/curso-sql/images/filter-database-object.webp)
+
+**Acciones utiles del Navigator:**
+
+- **Click derecho en una tabla** → aparece un menu con opciones como **View Table** (ver datos), **Generate SQL** (generar SELECT, INSERT, DDL), **Export Data**, etc.
+- **Doble click en una tabla** → abre sus propiedades con pestanas: Properties, Data (datos), Diagram (diagrama ER)
+- **Arrastrar una tabla al editor SQL** → inserta el nombre de la tabla en tu consulta
+
+![Menu contextual del Database Navigator con opciones de creacion y edicion](/curso-sql/images/Database-Navigator.webp)
+
+<Callout type="tip" title="Simple vs Advanced view">
+  Haz click derecho en tu conexion → **Connection view** para cambiar entre **Simple** (muestra solo lo esencial: tablas, vistas) y **Advanced** (muestra todo: funciones, triggers, tipos de datos, objetos del sistema). Para este curso, **Simple** es suficiente.
+
+  ![Opciones de vista Simple y Advanced en el menu contextual](/curso-sql/images/simple-and-advanced-view.webp)
 </Callout>
+
+**Filtrar objetos**: usa la barra de busqueda en la parte superior del Navigator para encontrar tablas u objetos por nombre. Es muy util cuando una base de datos tiene muchas tablas.
+
+**Link with Editor**: el boton **Link with Editor** en la toolbar del Navigator sincroniza la seleccion del arbol con el editor activo. Si lo activas y abres una tabla, el Navigator automaticamente la resalta en el arbol.
+
+![Link with Editor sincronizando el Navigator con el editor activo](/curso-sql/images/link-with-editor.webp)
+
+### SQL Editor
+
+Es donde escribes y ejecutas tus consultas SQL.
+
+**Como abrirlo:**
+- Menu: **SQL Editor → New SQL Editor**
+- Atajo: `Ctrl+]` (Windows/Linux) o `⌃]` (macOS)
+
+**Atajos de ejecucion:**
+
+| Accion | Windows/Linux | macOS |
+|--------|--------------|-------|
+| Ejecutar sentencia actual (donde esta el cursor) | `Ctrl+Enter` | `⌘+Enter` |
+| Ejecutar todo el script | `Alt+X` | `⌥+X` |
+| Ejecutar seleccion | Selecciona texto + `Ctrl+Enter` | Selecciona texto + `⌘+Enter` |
+
+<Callout type="info" title="Diferencia importante">
+  `Ctrl+Enter` **no ejecuta todo** el contenido del editor. Solo ejecuta la sentencia donde esta tu cursor (delimitada por `;`). Si quieres ejecutar todo el script completo, usa `Alt+X`. Y si seleccionas un fragmento de texto, `Ctrl+Enter` ejecuta solo esa seleccion.
+</Callout>
+
+Puedes tener **multiples pestanas** de SQL abiertas al mismo tiempo. Asegurate siempre de que el editor esta conectado a la base de datos correcta — verifica el selector de conexion en la barra superior del editor.
+
+### Data Editor (ver y editar datos)
+
+Cuando haces doble click en una tabla y seleccionas la pestana **Data**, se abre el **Data Editor**. Es una grilla interactiva que muestra los datos de la tabla.
+
+**Que puedes hacer:**
+
+- **Ver datos** en formato de tabla (Grid), texto plano (Text) o registro individual (Record)
+- **Filtrar** usando la barra de filtro en la parte superior — escribe condiciones SQL como `precio > 100`
+- **Ordenar** haciendo click en el encabezado de una columna
+- **Editar datos** directamente: haz click en una celda, modifica el valor, y luego click en el boton **Save** de la toolbar inferior para guardar los cambios
+- **Agregar o eliminar filas** usando los botones de la toolbar inferior
+
+![Data Editor mostrando datos en formato de grilla con sus toolbars](/curso-sql/images/Data-Editor-with-markup.webp)
+
+<Callout type="warning" title="Cuidado al editar datos">
+  Los cambios en el Data Editor se aplican directamente a la base de datos al hacer click en **Save**. Para tablas de practica esto esta bien, pero ten cuidado en entornos reales.
+</Callout>
+
+### Diagramas ER (relaciones entre tablas)
+
+DBeaver puede generar diagramas de entidad-relacion automaticamente, lo que te permite **ver graficamente** como se relacionan las tablas.
+
+**Como verlos:**
+- En el Navigator, haz doble click en el schema **public** (o en el nodo **Tables**) → se abre una pestana con el diagrama completo del schema
+- Tambien puedes abrir el diagrama de una tabla individual: doble click en la tabla → pestana **Diagram**
+
+El diagrama muestra:
+- Las tablas como cajas con sus columnas y tipos de datos
+- Las relaciones (foreign keys) como lineas entre tablas
+- La direccion de las relaciones (uno-a-muchos, etc.)
+
+**Acciones utiles:**
+- **Auto-arrange**: reorganiza las tablas automaticamente para mejor legibilidad
+- **Zoom**: acerca o aleja el diagrama
+- **Cambiar notacion**: click derecho → **Notation** para cambiar entre Crow's Foot (patas de gallo), IDEF1X o Bachman
+- **Exportar como imagen**: click derecho → **Save as Image** para guardar el diagrama como PNG, SVG u otro formato
+
+![Diagrama ER generado automaticamente por DBeaver mostrando tablas y relaciones](/curso-sql/images/entity-relation-diagrams-overview.webp)
+
+<Callout type="tip" title="Atajos rapidos de DBeaver">
+  Resumen de los atajos que mas vas a usar en el curso:
+
+  | Accion | Windows/Linux | macOS |
+  |--------|--------------|-------|
+  | Nueva conexion | `Ctrl+Shift+N` | `Ctrl+Shift+N` |
+  | Nuevo SQL Editor | `Ctrl+]` | `⌃]` |
+  | Ejecutar sentencia | `Ctrl+Enter` | `⌘+Enter` |
+  | Ejecutar script completo | `Alt+X` | `⌥+X` |
+</Callout>
+
+Para mas detalles sobre todas las funcionalidades de DBeaver, consulta la [documentacion oficial](https://github.com/dbeaver/dbeaver/wiki).
 
 ---
 
